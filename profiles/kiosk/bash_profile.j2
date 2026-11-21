@@ -1,0 +1,8 @@
+# ~/.bash_profile — Kioski profiil (kiosk-lobby). OMANIK root, kasutaja ei saa muuta.
+# Shell on /bin/rbash: cd on keelatud, PATH-i ei saa muuta, '/' käsunimedes keelatud.
+PATH={{ kiosk_home }}/bin
+export PATH
+readonly PATH
+readonly HISTFILE=/dev/null
+PS1='kiosk> '
+echo "Tere tulemast! NordicTech OÜ infokiosk. Lubatud käsud: {{ kiosk_commands | join(' ') }}"

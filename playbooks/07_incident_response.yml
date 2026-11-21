@@ -1,0 +1,210 @@
+---
+# 07_incident_response.yml — Неделя 4: автоматическое реагирование и аварийное восстановление
+#
+# На всех узлах:
+#   1. Удаляет посторонние учётки с UID=0 (shadow_admin) из passwd/shadow/group
+#   2. Находит процессы с удалённым бинарником или запущенные из /tmp (xmr_miner): образ в карантин
+#      (/root/quarantine, для расследования) и убивает их
+#   3. Закрывает неразрешённые слушающие порты (4444): убивает процесс-владелец
+# На ws-fin-01:
+#   4. Восстанавливает удалённые бухгалтерские файлы из ПОСЛЕДНЕГО зашифрованного
+#      бэкапа на backup-vault (проверка SHA-256 -> расшифровка AES-256 на hq-controller)
+# Затем:
+#   5. Повторно применяет харденинг (04) — чинит испорченный sshd_config и т.п.
+#   6. Запускает аудит (05) — дашборд снова зелёный, в нём отчёт о реагировании
+#
+# Запуск: ansible-playbook playbooks/07_incident_response.yml
+
+- name: IR | start
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Start time
+      ansible.builtin.set_fact:
+        ir_start_epoch: "{{ now(utc=true).timestamp() | int }}"
+        ir_start: "{{ now(utc=true).strftime('%Y-%m-%d %H:%M:%S UTC') }}"
+
+- name: IR | containment and eradication on every device
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Find unauthorized UID=0 accounts
+      ansible.builtin.shell: awk -F':' '$3 == 0 && $1 != "root" {print $1}' /etc/passwd
+      register: uid0
+      changed_when: false
+
+    - name: Remove backdoor accounts from passwd / shadow / group / gshadow
+      ansible.builtin.lineinfile:
+        path: "{{ item.1 }}"
+        regexp: "^{{ item.0 }}:"
+        state: absent
+      loop: "{{ uid0.stdout_lines | product(['/etc/passwd', '/etc/shadow', '/etc/group', '/etc/gshadow']) | list }}"
+      loop_control:
+        label: "{{ item.0 }} @ {{ item.1 }}"
+      failed_when: false
+
+    - name: Quarantine and kill processes running from DELETED binaries or temp dirs
+      ansible.builtin.shell: |
+        mkdir -p /root/quarantine && chmod 700 /root/quarantine
+        for d in /proc/[0-9]*; do
+          pid=${d#/proc/}
+          [ "$pid" = "$$" ] && continue
+          exe=$(readlink "$d/exe" 2>/dev/null) || continue
+          args=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)
+          case "$exe" in
+            *" (deleted)") ;;                                    # binary deleted from disk
+            /tmp/*|/var/tmp/*|/dev/shm/*) ;;                     # binary lives in a temp dir
+            *) case " $args" in *" /tmp/"*|*" /var/tmp/"*|*" /dev/shm/"*) ;; *) continue ;; esac ;;
+          esac
+          name=$(cat "$d/comm" 2>/dev/null)
+          case "$name" in sshd|tini|docker-init) continue ;; esac   # never kill the management plane
+          q="/root/quarantine/$(date -u +%Y%m%dT%H%M%SZ)_${name}_${pid}.bin"
+          cp "$d/exe" "$q" 2>/dev/null && chmod 000 "$q"
+          sum=$(sha256sum "$q" 2>/dev/null | cut -c1-16)
+          kill -9 "$pid" 2>/dev/null && echo "killed malware '$name' (pid $pid, binary ${exe}), sample quarantined sha256=${sum}…"
+        done
+        true
+      register: malware
+      changed_when: malware.stdout | length > 0
+
+    - name: Close unauthorized listening ports (kill the owning process)
+      ansible.builtin.shell: |
+        allowed=" {{ allowed_ports | join(' ') }} "
+        ss -Hltnup 2>/dev/null | while read -r netid state rq sq local peer proc; do
+          port=${local##*:}; addr=${local%:*}
+          [ "$addr" = "127.0.0.11" ] && continue            # Docker embedded DNS
+          case "$allowed" in *" $port "*) continue ;; esac
+          for pid in $(echo "$proc" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u); do
+            name=$(cat /proc/$pid/comm 2>/dev/null)
+            [ "$name" = "sshd" ] && continue
+            kill -9 "$pid" 2>/dev/null && echo "closed port $port/$netid: killed '$name' (pid $pid)"
+          done
+        done
+        true
+      register: ports
+      changed_when: ports.stdout | length > 0
+
+    - name: Device actions
+      ansible.builtin.set_fact:
+        ir_actions: >-
+          {{ (uid0.stdout_lines | map('regex_replace', '^(.*)$', 'removed backdoor UID=0 account \1') | list)
+             + malware.stdout_lines + ports.stdout_lines }}
+
+- name: IR | fetch latest encrypted backup of ws-fin-01 from backup-vault
+  hosts: vault
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Latest ws-fin-01 archive
+      ansible.builtin.shell: ls -1t {{ backup_vault_dir }}/ws-fin-01/*.tar.gz.enc | head -n 1
+      register: latest
+      changed_when: false
+
+    - name: Fetch ciphertext + checksum to hq-controller
+      ansible.builtin.fetch:
+        src: "{{ item }}"
+        dest: "{{ cf_state_dir }}/staging/"
+        flat: true
+      loop: ["{{ latest.stdout }}", "{{ latest.stdout }}.sha256"]
+
+- name: IR | verify and decrypt on hq-controller
+  hosts: localhost
+  become: true
+  gather_facts: false
+  vars:
+    enc_name: "{{ hostvars[groups['vault'][0]].latest.stdout | basename }}"
+  tasks:
+    - name: Verify SHA-256 and decrypt AES-256
+      ansible.builtin.shell: |
+        set -e
+        cd {{ cf_state_dir }}/staging
+        sha256sum -c {{ enc_name }}.sha256
+        umask 077
+        openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+          -in {{ enc_name }} -out restore_ws-fin-01.tar.gz -pass file:{{ cf_state_dir }}/secrets/backup.key
+        rm -f {{ enc_name }} {{ enc_name }}.sha256
+        tar -tzf restore_ws-fin-01.tar.gz | grep -vc '/$'
+      register: decrypted
+
+    - name: Backup used
+      ansible.builtin.debug:
+        msg: "Using {{ enc_name }}: SHA-256 OK, decrypted, {{ decrypted.stdout_lines[-1] }} files"
+
+- name: IR | restore accountant documents on ws-fin-01
+  hosts: ws-fin-01
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Upload decrypted archive (private)
+      ansible.builtin.copy:
+        src: "{{ cf_state_dir }}/staging/restore_ws-fin-01.tar.gz"
+        dest: /root/restore_ws-fin-01.tar.gz
+        mode: "0600"
+
+    - name: Restore missing files (existing newer files are kept)
+      ansible.builtin.shell: |
+        before=$(find /home/{{ fin_user }}/Raamatupidamine_2026 -type f 2>/dev/null | wc -l)
+        tar -xzf /root/restore_ws-fin-01.tar.gz -C / --skip-old-files
+        after=$(find /home/{{ fin_user }}/Raamatupidamine_2026 -type f | wc -l)
+        rm -f /root/restore_ws-fin-01.tar.gz
+        echo $((after - before))
+      register: restored
+      changed_when: restored.stdout | int > 0
+
+    - name: Files now in ~/Raamatupidamine_2026
+      ansible.builtin.command: ls -l /home/{{ fin_user }}/Raamatupidamine_2026
+      register: fin_ls
+      changed_when: false
+
+    - name: Record restore action
+      ansible.builtin.set_fact:
+        ir_actions: "{{ ir_actions + ['restored ' ~ restored.stdout ~ ' finance file(s) from AES-256 backup ' ~ hostvars['localhost'].enc_name | default(hostvars[groups['vault'][0]].latest.stdout | basename)] }}"
+
+    - name: Show restored files
+      ansible.builtin.debug:
+        var: fin_ls.stdout_lines
+
+- name: IR | clean staging and write incident record
+  hosts: localhost
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Remove decrypted plaintext from controller
+      ansible.builtin.file:
+        path: "{{ cf_state_dir }}/staging/restore_ws-fin-01.tar.gz"
+        state: absent
+
+    - name: Collect actions from all devices
+      ansible.builtin.set_fact:
+        all_actions: >-
+          {%- set out = [] -%}
+          {%- for h in groups['all'] | sort -%}
+            {%- for a in hostvars[h].ir_actions | default([]) -%}{%- set _ = out.append(h ~ ': ' ~ a) -%}{%- endfor -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Write incident.json (shown on the dashboard)
+      ansible.builtin.copy:
+        dest: "{{ cf_state_dir }}/{{ item }}"
+        mode: "0600"
+        content: >-
+          {{ {'started_at': ir_start,
+              'finished_at': now(utc=true).strftime('%Y-%m-%d %H:%M:%S UTC'),
+              'duration_s': (now(utc=true).timestamp() | int) - (ir_start_epoch | int),
+              'actions': all_actions} | to_nice_json }}
+      loop:
+        - incident.json
+        - "incident_{{ now(utc=true).strftime('%Y%m%dT%H%M%SZ') }}.json"
+
+    - name: Incident response summary
+      ansible.builtin.debug:
+        msg: "{{ all_actions if all_actions else ['Nothing to remediate'] }}"
+
+# 5. Re-apply the security baseline (fixes tampered sshd_config, banners, kiosk, cron)
+- name: IR | re-apply hardening
+  ansible.builtin.import_playbook: 04_hardening.yml
+
+# 6. Verify: audit again -> dashboard should be green
+- name: IR | verification audit
+  ansible.builtin.import_playbook: 05_security_audit.yml

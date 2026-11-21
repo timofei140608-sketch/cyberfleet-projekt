@@ -1,0 +1,225 @@
+---
+# 04_hardening.yml — Неделя 3: CIS-подобная политика безопасности + self-healing
+#   - SSH: вход по паролю запрещён (только ключ), root запрещён, баннер
+#   - Баннеры /etc/issue.net и /etc/motd
+#   - Киоск и IoT: удаление telnet, netcat и компиляторов (python3 НЕ трогаем: он нужен Ansible)
+#   - Повторное применение блокировок киоска и бухгалтера (drift remediation)
+#   - hq-controller: cron каждые 10 минут запускает этот плейбук (self-healing),
+#     каждые 5 минут — аудит 05 (он же обновляет CMDB), ночью — бэкап 06
+#
+# ВНИМАНИЕ: перед первым запуском ключи должны быть розданы (scripts/distribute_keys.sh),
+# потому что после него вход по паролю отключён.
+#
+# Запуск: ansible-playbook playbooks/04_hardening.yml
+
+- name: Hardening | SSH, banners, permissions
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    sshd_settings:
+      PasswordAuthentication: "no"
+      KbdInteractiveAuthentication: "no"
+      PermitEmptyPasswords: "no"
+      PermitRootLogin: "no"
+      PubkeyAuthentication: "yes"
+      MaxAuthTries: "3"
+      LoginGraceTime: "30"
+      X11Forwarding: "no"
+      ClientAliveInterval: "300"
+      ClientAliveCountMax: "2"
+      Banner: /etc/issue.net
+    banner_text: |
+      ************************************************************************
+       NordicTech OÜ — AUTHORIZED ACCESS ONLY / AINULT VOLITATUD KASUTAJATELE
+       All activity is monitored and logged. Kõik tegevused logitakse.
+       Unauthorized access is prohibited and will be prosecuted.
+      ************************************************************************
+  handlers:
+    - name: Reload sshd
+      ansible.builtin.shell: |
+        for f in /run/sshd.pid /var/run/sshd.pid; do
+          [ -s "$f" ] && kill -HUP "$(cat "$f")" && exit 0
+        done
+        pkill -HUP -o -x sshd
+      changed_when: true
+  tasks:
+    - name: Login banners (/etc/issue.net, /etc/motd)
+      ansible.builtin.copy:
+        dest: "{{ item }}"
+        content: "{{ banner_text }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [/etc/issue.net, /etc/motd]
+
+    - name: sshd drop-in directory
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d
+        state: directory
+        mode: "0755"
+
+    - name: sshd_config includes drop-ins
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        line: Include /etc/ssh/sshd_config.d/*.conf
+        insertbefore: BOF
+        validate: /usr/sbin/sshd -t -f %s
+      notify: Reload sshd
+
+    - name: Harden main sshd_config
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?\\s*{{ item.key }}\\s"
+        line: "{{ item.key }} {{ item.value }}"
+        validate: /usr/sbin/sshd -t -f %s
+      loop: "{{ sshd_settings | dict2items }}"
+      notify: Reload sshd
+
+    - name: Hardening drop-in 00-cyberfleet.conf (first match wins — overrides any later drop-in)
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/00-cyberfleet.conf
+        content: |
+          # Managed by Ansible (04_hardening.yml) — manual changes are reverted every 10 min
+          {% for k, v in sshd_settings.items() %}
+          {{ k }} {{ v }}
+          {% endfor %}
+          {% if inventory_hostname == 'ws-fin-01' %}
+          # Raamatupidaja tööjaam: SSH ainult haldus- ja raamatupidaja kontole
+          AllowUsers ansible {{ fin_user }}
+          {% endif %}
+        owner: root
+        group: root
+        mode: "0600"
+      notify: Reload sshd
+
+    - name: Validate full sshd configuration
+      ansible.builtin.command: /usr/sbin/sshd -t
+      changed_when: false
+
+    - name: Critical file permissions
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        owner: root
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: /etc/passwd, mode: "0644"}
+        - {path: /etc/ssh/sshd_config, mode: "0600"}
+        - {path: /etc/sudoers, mode: "0440"}
+
+    - name: Lock root password (no password logins for root)
+      ansible.builtin.user:
+        name: root
+        password_lock: true
+
+- name: Hardening | remove dangerous tools from kiosk and IoT
+  hosts: kiosks:iot
+  become: true
+  vars:
+    banned_packages:
+      Debian: [telnet, inetutils-telnet, netcat-openbsd, netcat-traditional, ncat, nmap, gcc, g++, cpp, make, build-essential]
+      Alpine: [busybox-extras, netcat-openbsd, nmap-ncat, gcc, g++, make, musl-dev, build-base]
+    # BusyBox содержит nc/telnet как апплеты-симлинки
+    banned_links: [/usr/bin/nc, /usr/bin/telnet, /usr/bin/netcat, /bin/nc, /bin/telnet]
+  tasks:
+    - name: Remove packages (Debian / Debian Slim)
+      ansible.builtin.apt:
+        name: "{{ banned_packages.Debian }}"
+        state: absent
+        purge: true
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Remove packages (Alpine)
+      community.general.apk:
+        name: "{{ banned_packages.Alpine }}"
+        state: absent
+      when: ansible_facts['os_family'] == 'Alpine'
+
+    - name: Remove BusyBox nc/telnet applet links
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ banned_links }}"
+
+    - name: Verify no banned tools left
+      ansible.builtin.shell: |
+        for t in telnet nc netcat ncat gcc cc make; do command -v $t >/dev/null 2>&1 && echo "FOUND $t"; done; true
+      register: leftovers
+      changed_when: false
+      failed_when: "'FOUND' in leftovers.stdout"
+
+- name: Hardening | drift remediation for user profiles (kiosk, accountant)
+  hosts: kiosks:ws-fin-01
+  become: true
+  tasks:
+    - name: Kiosk — restricted shell enforced
+      ansible.builtin.user:
+        name: "{{ kiosk_user }}"
+        shell: /bin/rbash
+      when: "'kiosks' in group_names"
+
+    - name: Kiosk — profile files owned by root, read-only
+      ansible.builtin.file:
+        path: "/home/{{ kiosk_user }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [.bash_profile, .bashrc]
+      when: "'kiosks' in group_names"
+
+    - name: Kiosk — home and bin owned by root
+      ansible.builtin.file:
+        path: "{{ item }}"
+        owner: root
+        mode: "0755"
+      loop: ["/home/{{ kiosk_user }}", "/home/{{ kiosk_user }}/bin"]
+      when: "'kiosks' in group_names"
+
+    - name: No sudo for kiosk / accountant
+      ansible.builtin.file:
+        path: "/etc/sudoers.d/90-{{ item }}"
+        state: absent
+      loop: ["{{ kiosk_user }}", "{{ fin_user }}"]
+
+    - name: Accountant — documents folder private (0700)
+      ansible.builtin.file:
+        path: "/home/{{ fin_user }}/Raamatupidamine_2026"
+        state: directory
+        owner: "{{ fin_user }}"
+        mode: "0700"
+      when: inventory_hostname == 'ws-fin-01'
+
+- name: Self-healing | cron on hq-controller
+  hosts: localhost
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Log directory
+      ansible.builtin.file:
+        path: "{{ cf_log_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Cron jobs (self-healing every 10 min, audit + CMDB every 5 min, backup nightly)
+      ansible.builtin.copy:
+        dest: /etc/cron.d/cyberfleet
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # CyberFleet 2026 — managed by Ansible (04_hardening.yml)
+          SHELL=/bin/bash
+          PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          HOME=/root
+          ANSIBLE_CONFIG=/ansible/ansible.cfg
+          ANSIBLE_FORCE_COLOR=0
+          # Self-healing / drift remediation: every 10 minutes
+          */10 * * * * root cd /ansible && flock -n /run/cf-hardening.lock ansible-playbook playbooks/04_hardening.yml >> {{ cf_log_dir }}/self-healing.log 2>&1
+          # HIDS/FIM audit + CMDB refresh: every 5 minutes
+          */5 * * * *  root cd /ansible && flock -n /run/cf-audit.lock bash -c 'ansible-playbook playbooks/02_generate_cmdb.yml && ansible-playbook playbooks/05_security_audit.yml' >> {{ cf_log_dir }}/audit.log 2>&1
+          # Encrypted fleet backup: every night 02:15
+          15 2 * * *   root cd /ansible && flock -n /run/cf-backup.lock ansible-playbook playbooks/06_fleet_backup.yml >> {{ cf_log_dir }}/backup.log 2>&1
+
+    - name: cron is running
+      ansible.builtin.shell: pgrep -x cron >/dev/null || (service cron start || cron)
+      changed_when: false

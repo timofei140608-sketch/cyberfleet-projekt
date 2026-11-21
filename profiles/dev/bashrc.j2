@@ -1,0 +1,24 @@
+# ~/.bashrc — Arendaja profiil (ws-dev-01). Hallatud Ansible'iga (03_profiles.yml)
+[ -z "$PS1" ] && return
+[ -f /etc/bash.bashrc ] && . /etc/bash.bashrc
+
+HISTSIZE=5000
+HISTFILESIZE=10000
+HISTCONTROL=ignoreboth
+shopt -s histappend
+
+PS1='\[\e[1;32m\]\u@\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]$(git branch 2>/dev/null | sed -n "s/* \(.*\)/ (\1)/p")\$ '
+
+# Aliased
+alias ll='ls -alF --color=auto'
+alias la='ls -A'
+alias gs='git status'
+alias gl='git log --oneline --graph --decorate -20'
+alias gd='git diff'
+alias py='python3'
+alias venv='python3 -m venv .venv && . .venv/bin/activate'
+alias ports='ss -tulpn'
+alias projects='cd ~/projects'
+
+export EDITOR=vim
+export PATH="$HOME/.local/bin:$PATH"

@@ -1,0 +1,48 @@
+# Общие переменные CyberFleet 2026 (применяются ко всем узлам инвентаря)
+
+# Каталоги состояния на hq-controller (том hq_data)
+cf_state_dir: /var/lib/cyberfleet
+cf_log_dir: /var/log/cyberfleet
+cf_web_root: /var/www/html
+
+# Сетевая зона узла — по группам инвентаря
+cf_zone: >-
+  {{ 'mgmt_net' if 'mgmt' in group_names
+     else 'corp_net' if 'corp' in group_names
+     else 'dmz_iot' if 'dmz' in group_names
+     else 'mgmt_net + corp_net + dmz_iot' }}
+
+# Разрешённые слушающие порты (всё остальное — тревога в CMDB и закрывается в 07)
+allowed_ports: [22]
+
+# Osquery есть везде, кроме Alpine (там лёгкий скрипт телеметрии)
+use_osquery: "{{ ansible_facts['os_family'] | default('') != 'Alpine' }}"
+
+# Если нужен HTTP-прокси для установки пакетов (корпоративная сеть):
+#   proxy_env: {http_proxy: "http://proxy:3128", https_proxy: "http://proxy:3128"}
+proxy_env: {}
+
+# Критичные файлы для FIM (контроль целостности)
+fim_files:
+  - /etc/passwd
+  - /etc/shadow
+  - /etc/ssh/sshd_config
+  - /etc/sudoers
+
+# Учебные пароли пользователей профилей (SHA-512 хэши; вход по SSH паролем отключён)
+#   arendaja: Arendaja2026!   raamatupidaja: Raamat2026!   kiosk: Kiosk2026!
+dev_user: arendaja
+dev_password_hash: "$6$0fa489e00a929ff9$Y6UnjDu9iyrrIRotOlf52oPj7hcD4N8UbFOw/6qe2tKhCF1NIV/P2y75GsmPmL2Fg8b6gjmwk.itc6VZ0ldq2/"
+fin_user: raamatupidaja
+fin_password_hash: "$6$bea291422b52ccc3$.KKX5GKsYacuYU.Vh42savHrIl2Hmp3rfUpfq89jx/u.l8SbIQp/47lVTFomL.px.GxqoSYRgc1dXd.LxOHGE0"
+kiosk_user: kiosk
+kiosk_password_hash: "$6$1d75539d644415e8$.W1/8BPXJ6.u/32pHJuM1VRSJ0q5XwFAPu1oKbSgIkuxmZaY6/GdQtir1OnPp4ZMGGUonSomlRgP4WcIQqCGc."
+
+# Что бэкапит 06_fleet_backup.yml (хост: список путей)
+backup_sources:
+  ws-fin-01: [/home/raamatupidaja/Raamatupidamine_2026]
+  ws-dev-01: [/home/arendaja/projects]
+  srv-app-01: [/etc/nordicapp, /etc/ssh, /etc/sudoers, /etc/sudoers.d, /opt/nordicapp]
+  iot-sensor-1: [/var/log/sensor.log]
+backup_vault_dir: /srv/backups
+backup_keep: 10          # сколько последних копий хранить на каждый хост

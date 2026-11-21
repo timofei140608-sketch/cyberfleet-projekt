@@ -1,0 +1,5 @@
+" ~/.vimrc — Arendaja profiil
+syntax on
+set number
+set expandtab tabstop=4 shiftwidth=4
+set hlsearch incsearch

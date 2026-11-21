@@ -1,0 +1,157 @@
+---
+# 06_fleet_backup.yml — Неделя 3: централизованный ЗАШИФРОВАННЫЙ бэкап
+#   ws-fin-01    -> бухгалтерские документы (~/Raamatupidamine_2026)
+#   ws-dev-01    -> исходный код (~/projects)
+#   srv-app-01   -> конфигурация (/etc/nordicapp, /etc/ssh, sudoers, /opt/nordicapp)
+#   iot-sensor-1 -> логи датчика (/var/log/sensor.log)
+#
+# Поток (Zero Trust: клиенты не видят backup-vault, всё идёт через hq-controller):
+#   клиент: tar.gz  ->  hq-controller: AES-256 (OpenSSL, PBKDF2) + SHA-256  ->  backup-vault
+# На backup-vault попадает только шифротекст; ключ лежит только на hq-controller.
+#
+# Запуск: ansible-playbook playbooks/06_fleet_backup.yml
+
+- name: Backup | prepare key on hq-controller
+  hosts: localhost
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Secure directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0700"
+      loop: ["{{ cf_state_dir }}", "{{ cf_state_dir }}/secrets", "{{ cf_state_dir }}/staging"]
+
+    - name: Generate AES-256 backup passphrase (once)
+      ansible.builtin.shell: |
+        umask 077
+        openssl rand -base64 48 > {{ cf_state_dir }}/secrets/backup.key
+      args:
+        creates: "{{ cf_state_dir }}/secrets/backup.key"
+
+    - name: Backup run id
+      ansible.builtin.set_fact:
+        backup_ts: "{{ now(utc=true).strftime('%Y%m%dT%H%M%SZ') }}"
+
+- name: Backup | archive data on clients and pull to hq-controller
+  hosts: ws-fin-01:ws-dev-01:srv-app-01:iot-sensor-1     # = ключи backup_sources в group_vars/all.yml
+  become: true
+  gather_facts: false
+  vars:
+    backup_ts: "{{ hostvars['localhost'].backup_ts }}"
+    archive: "/tmp/cf_{{ inventory_hostname }}_{{ backup_ts }}.tar.gz"
+  tasks:
+    - name: Existing paths to back up
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ backup_sources[inventory_hostname] }}"
+      register: src_stat
+
+    - name: Create tar.gz (paths relative to /, owners and modes preserved)
+      ansible.builtin.shell: >
+        umask 077 &&
+        tar -czf {{ archive }} -C /
+        {% for s in src_stat.results if s.stat.exists %}{{ s.item | regex_replace('^/', '') }} {% endfor %}
+      when: src_stat.results | selectattr('stat.exists') | list | length > 0
+
+    - name: Pull archive to hq-controller staging
+      ansible.builtin.fetch:
+        src: "{{ archive }}"
+        dest: "{{ cf_state_dir }}/staging/"
+        flat: true
+
+    - name: Remove plaintext archive from client
+      ansible.builtin.file:
+        path: "{{ archive }}"
+        state: absent
+
+- name: Backup | encrypt on hq-controller (AES-256) and checksum
+  hosts: localhost
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Encrypt each archive with AES-256-CBC (PBKDF2, 200k iterations, salt) + SHA-256
+      ansible.builtin.shell: |
+        set -e
+        cd {{ cf_state_dir }}/staging
+        for f in cf_*_{{ backup_ts }}.tar.gz; do
+          [ -f "$f" ] || continue
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+            -in "$f" -out "$f.enc" -pass file:{{ cf_state_dir }}/secrets/backup.key
+          sha256sum "$f.enc" > "$f.enc.sha256"
+          shred -u "$f" 2>/dev/null || rm -f "$f"     # plaintext never leaves the controller
+          echo "$f.enc"
+        done
+      register: encrypted
+
+    - name: Encrypted archives
+      ansible.builtin.debug:
+        var: encrypted.stdout_lines
+
+- name: Backup | ship to backup-vault and verify
+  hosts: vault
+  become: true
+  gather_facts: false
+  vars:
+    backup_ts: "{{ hostvars['localhost'].backup_ts }}"
+    staging: "{{ cf_state_dir }}/staging"
+    files: "{{ hostvars['localhost'].encrypted.stdout_lines }}"
+  tasks:
+    - name: Vault root directory (root only)
+      ansible.builtin.file:
+        path: "{{ backup_vault_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Vault directories per device (root only)
+      ansible.builtin.file:
+        path: "{{ backup_vault_dir }}/{{ item.split('_')[1] }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      loop: "{{ files }}"
+
+    - name: Copy encrypted archive and checksum
+      ansible.builtin.copy:
+        src: "{{ staging }}/{{ item.0 }}{{ item.1 }}"
+        dest: "{{ backup_vault_dir }}/{{ item.0.split('_')[1] }}/{{ item.0 }}{{ item.1 }}"
+        owner: root
+        group: root
+        mode: "0600"
+      loop: "{{ files | product(['', '.sha256']) | list }}"
+      loop_control:
+        label: "{{ item.0 }}{{ item.1 }}"
+
+    - name: Verify SHA-256 on the vault
+      ansible.builtin.shell: cd {{ backup_vault_dir }}/{{ item.split('_')[1] }} && sha256sum -c {{ item }}.sha256
+      loop: "{{ files }}"
+      changed_when: false
+
+    - name: Retention — keep last {{ backup_keep }} copies per device
+      ansible.builtin.shell: |
+        cd {{ backup_vault_dir }}/{{ item }} || exit 0
+        ls -1t *.tar.gz.enc 2>/dev/null | tail -n +{{ backup_keep | int + 1 }} | while read f; do rm -f "$f" "$f.sha256"; done
+      loop: "{{ files | map('split', '_') | map(attribute=1) | unique | list }}"
+      changed_when: false
+
+    - name: Vault contents
+      ansible.builtin.shell: find {{ backup_vault_dir }} -name '*.enc' -printf '%TY-%Tm-%Td %TH:%TM  %8s B  %p\n' | sort | tail -n 12
+      register: listing
+      changed_when: false
+
+    - name: Report
+      ansible.builtin.debug:
+        var: listing.stdout_lines
+
+- name: Backup | clean staging on hq-controller
+  hosts: localhost
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Remove staged encrypted copies
+      ansible.builtin.shell: rm -f {{ cf_state_dir }}/staging/cf_*_{{ backup_ts }}.tar.gz.enc*
+      changed_when: true

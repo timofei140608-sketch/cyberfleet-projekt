@@ -1,0 +1,160 @@
+---
+# 05_security_audit.yml — Неделя 3/4: Osquery HIDS, FIM и охота на вредоносы
+#
+# Osquery SQL на каждом узле:
+#   1. FIM: SHA-256 критичных файлов (таблица hash) + сравнение с эталоном (baseline)
+#   2. Процессы с удалённым с диска бинарником (processes WHERE on_disk = 0)
+#   3. Посторонние учётки с UID = 0
+#   4. Неразрешённые слушающие порты (listening_ports)
+#   5. Процессы, запущенные из /tmp, /var/tmp, /dev/shm (типичное место дропперов/майнеров)
+# Все находки подсвечиваются КРАСНЫМ на CMDB-дашборде (http://localhost:8080).
+#
+# Запуск:   ansible-playbook playbooks/05_security_audit.yml
+# Эталон:   создаётся автоматически при первом запуске.
+#           После легитимных изменений: ansible-playbook playbooks/05_security_audit.yml -e fim_rebaseline=true
+
+- name: Audit | Osquery HIDS / FIM queries on every device
+  hosts: all:localhost
+  become: true
+  gather_facts: true
+  vars:
+    audit_queries:
+      fim: >-
+        SELECT path, sha256 FROM hash
+        WHERE path IN ('{{ fim_files | join("','") }}');
+      deleted_procs: >-
+        SELECT pid, name, path, cmdline FROM processes WHERE on_disk = 0;
+      tmp_procs: >-
+        SELECT pid, name, path, cmdline FROM processes
+        WHERE on_disk != 0 AND name != 'osqueryi' AND (path LIKE '/tmp/%' OR path LIKE '/var/tmp/%' OR path LIKE '/dev/shm/%'
+           OR cmdline LIKE '% /tmp/%' OR cmdline LIKE '% /var/tmp/%' OR cmdline LIKE '% /dev/shm/%'
+           OR cmdline LIKE '/tmp/%' OR cmdline LIKE '/dev/shm/%');
+      uid0: >-
+        SELECT username, uid, gid, directory, shell FROM users
+        WHERE uid = 0 AND username != 'root';
+      ports: >-
+        SELECT DISTINCT lp.port, lp.protocol, lp.address, p.name AS process, p.pid
+        FROM listening_ports lp LEFT JOIN processes p ON lp.pid = p.pid
+        WHERE lp.port != 0 AND lp.address != '127.0.0.11';
+  tasks:
+    - name: Osquery SQL (HIDS)
+      ansible.builtin.command:
+        argv: [osqueryi, --json, "{{ item.value }}"]
+      loop: "{{ audit_queries | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      register: oq
+      changed_when: false
+      when: use_osquery | bool
+
+    - name: Audit record (Osquery)
+      ansible.builtin.set_fact:
+        audit_record: >-
+          {{ dict(oq.results | map(attribute='item.key')
+                  | zip(oq.results | map(attribute='stdout') | map('from_json'))) }}
+      when: use_osquery | bool
+
+    - name: Lightweight audit (Alpine, cf-telemetry)
+      ansible.builtin.command: /usr/local/bin/cf-telemetry audit
+      register: tel
+      changed_when: false
+      when: not (use_osquery | bool)
+
+    - name: Audit record (Alpine)
+      ansible.builtin.set_fact:
+        audit_record: "{{ tel.stdout | from_json }}"
+      when: not (use_osquery | bool)
+
+    - name: Allowed ports for this device
+      ansible.builtin.set_fact:
+        audit_record: "{{ audit_record | combine({'allowed_ports': allowed_ports}) }}"
+
+- name: Audit | evaluate findings, update dashboard
+  hosts: localhost
+  become: true
+  gather_facts: false
+  vars:
+    baseline_file: "{{ cf_state_dir }}/fim_baseline.json"
+    audited: "{{ groups['all'] + ['localhost'] }}"
+  tasks:
+    - name: Read FIM baseline
+      ansible.builtin.slurp:
+        src: "{{ baseline_file }}"
+      register: baseline_raw
+      failed_when: false
+
+    - name: Current baseline
+      ansible.builtin.set_fact:
+        baseline: >-
+          {{ {} if (fim_rebaseline | default(false) | bool) or baseline_raw.content is not defined
+             else baseline_raw.content | b64decode | from_json }}
+
+    - name: Add missing hosts/files to baseline (first run = trusted state)
+      ansible.builtin.set_fact:
+        baseline: >-
+          {{ baseline | combine({
+               item: dict(hostvars[item].audit_record.fim | map(attribute='path')
+                          | zip(hostvars[item].audit_record.fim | map(attribute='sha256')))
+                     | combine(baseline[item] | default({}))
+             }) }}
+      loop: "{{ audited }}"
+      when: hostvars[item].audit_record is defined
+
+    - name: Save baseline
+      ansible.builtin.copy:
+        dest: "{{ baseline_file }}"
+        content: "{{ baseline | to_nice_json }}"
+        mode: "0600"
+
+    - name: Evaluate alerts per device
+      ansible.builtin.set_fact:
+        audit_hosts: "{{ audit_hosts | default({}) | combine({item: rec | combine({'fim_baseline': baseline[item] | default({}), 'alerts': alerts})}) }}"
+      vars:
+        rec: "{{ hostvars[item].audit_record }}"
+        allowed: "{{ rec.allowed_ports | map('string') | list }}"
+        alerts: >-
+          {%- set out = [] -%}
+          {%- for f in rec.fim -%}
+            {%- set b = (baseline[item] | default({}))[f.path] | default('') -%}
+            {%- if b and b != f.sha256 -%}
+              {%- set _ = out.append({'type': 'FIM', 'message': f.path ~ ' SHA-256 changed (' ~ b[:12] ~ '… → ' ~ f.sha256[:12] ~ '…)'}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- for p in rec.deleted_procs -%}
+            {%- set _ = out.append({'type': 'MALWARE', 'message': 'process "' ~ p.name ~ '" pid ' ~ p.pid ~ ' runs from a DELETED binary ' ~ p.path}) -%}
+          {%- endfor -%}
+          {%- for p in rec.tmp_procs | default([]) -%}
+            {%- set _ = out.append({'type': 'SUSPICIOUS', 'message': 'process "' ~ p.name ~ '" pid ' ~ p.pid ~ ' runs from a temp location: ' ~ p.cmdline[:120]}) -%}
+          {%- endfor -%}
+          {%- for u in rec.uid0 -%}
+            {%- set _ = out.append({'type': 'BACKDOOR', 'message': 'unauthorized UID=0 account "' ~ u.username ~ '" (shell ' ~ u.shell ~ ')'}) -%}
+          {%- endfor -%}
+          {%- for p in rec.ports | unique(attribute='port') -%}
+            {%- if (p.port | string) not in allowed -%}
+              {%- set _ = out.append({'type': 'PORT', 'message': 'unauthorized listening port ' ~ p.port ~ ' (' ~ (p.process | default('?')) ~ ', ' ~ p.address ~ ')'}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+      loop: "{{ audited }}"
+      when: hostvars[item].audit_record is defined
+
+    - name: Save audit snapshot (audit.json + history)
+      ansible.builtin.copy:
+        dest: "{{ cf_state_dir }}/{{ item }}"
+        mode: "0600"
+        content: "{{ {'generated_at': now(utc=true).strftime('%Y-%m-%d %H:%M:%S UTC'), 'hosts': audit_hosts} | to_nice_json }}"
+      loop:
+        - audit.json
+        - "audit_{{ now(utc=true).strftime('%Y%m%dT%H%M%SZ') }}.json"
+
+    - name: Render dashboard (alerts in red)
+      ansible.builtin.include_tasks: tasks/render_dashboard.yml
+
+    - name: Audit summary
+      ansible.builtin.debug:
+        msg: >-
+          {%- set ns = namespace(lines=[]) -%}
+          {%- for h, r in audit_hosts | dictsort -%}
+            {%- for a in r.alerts -%}{%- set ns.lines = ns.lines + ['🔴 ' ~ h ~ ' | ' ~ a.type ~ ' | ' ~ a.message] -%}{%- endfor -%}
+          {%- endfor -%}
+          {{ ns.lines if ns.lines else ['🟢 No findings — all devices clean'] }}

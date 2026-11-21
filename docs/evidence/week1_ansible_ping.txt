@@ -1,0 +1,29 @@
+# Week 1 — ansible all -m ping
+iot-sensor-1 | SUCCESS => {
+    "changed": false,
+    "ping": "pong"
+}
+ws-dev-01 | SUCCESS => {
+    "changed": false,
+    "ping": "pong"
+}
+srv-app-01 | SUCCESS => {
+    "changed": false,
+    "ping": "pong"
+}
+backup-vault | SUCCESS => {
+    "changed": false,
+    "ping": "pong"
+}
+kiosk-lobby | SUCCESS => {
+    "changed": false,
+    "ping": "pong"
+}
+iot-cam-1 | SUCCESS => {
+    "changed": false,
+    "ping": "pong"
+}
+ws-fin-01 | SUCCESS => {
+    "changed": false,
+    "ping": "pong"
+}

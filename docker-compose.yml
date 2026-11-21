@@ -1,0 +1,134 @@
+# CyberFleet 2026 — виртуальный парк NordicTech OÜ
+# 8 контейнеров, 4 ОС, 3 сети (Zero Trust сегментация).
+# Имена контейнеров менять нельзя: их использует chaos_attack.sh.
+
+name: cyberfleet
+
+networks:
+  mgmt_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.10.0/24
+  corp_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.20.0/24
+  dmz_iot:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.30.0/24
+
+volumes:
+  hq_ssh: {}          # SSH-ключ hq-controller (переживает пересоздание контейнера)
+  hq_data: {}         # ключ шифрования бэкапов, FIM-baseline, отчёты аудита
+  vault_data: {}      # зашифрованные бэкапы на backup-vault
+
+services:
+
+  # ---------- mgmt_net ----------
+  hq-controller:            # Ubuntu 24.04: Ansible, Osquery, Nginx (CMDB)
+    build: ./Dockerfiles/hq-controller
+    image: cyberfleet/hq-controller
+    container_name: hq-controller
+    hostname: hq-controller
+    init: true              # tini как PID 1: убирает зомби-процессы (нет systemd)
+    ports:
+      - "8080:80"           # CMDB-дашборд: http://localhost:8080
+    volumes:
+      - ./:/ansible         # репозиторий (hosts.ini, ansible.cfg, playbooks) внутри контроллера
+      - hq_ssh:/root/.ssh
+      - hq_data:/var/lib/cyberfleet
+    environment:
+      - ANSIBLE_CONFIG=/ansible/ansible.cfg
+    networks:               # единственный узел во всех трёх сетях
+      mgmt_net:
+        ipv4_address: 172.30.10.10
+      corp_net:
+        ipv4_address: 172.30.20.10
+      dmz_iot:
+        ipv4_address: 172.30.30.10
+    restart: unless-stopped
+
+  backup-vault:             # Debian 12: шифрованные бэкапы
+    build: ./Dockerfiles/debian
+    image: cyberfleet/debian
+    container_name: backup-vault
+    hostname: backup-vault
+    init: true              # tini как PID 1: убирает зомби-процессы (нет systemd)
+    volumes:
+      - vault_data:/srv/backups
+    networks:
+      mgmt_net:
+        ipv4_address: 172.30.10.20
+    restart: unless-stopped
+
+  # ---------- corp_net ----------
+  ws-dev-01:                # Ubuntu 24.04: разработчик
+    build: ./Dockerfiles/ubuntu
+    image: cyberfleet/ubuntu
+    container_name: ws-dev-01
+    hostname: ws-dev-01
+    init: true              # tini как PID 1: убирает зомби-процессы (нет systemd)
+    networks:
+      corp_net:
+        ipv4_address: 172.30.20.11
+    restart: unless-stopped
+
+  ws-fin-01:                # Ubuntu 24.04: бухгалтер
+    build: ./Dockerfiles/ubuntu
+    image: cyberfleet/ubuntu
+    container_name: ws-fin-01
+    hostname: ws-fin-01
+    init: true              # tini как PID 1: убирает зомби-процессы (нет systemd)
+    networks:
+      corp_net:
+        ipv4_address: 172.30.20.12
+    restart: unless-stopped
+
+  srv-app-01:               # Rocky Linux 9: сервер приложений
+    build: ./Dockerfiles/rocky
+    image: cyberfleet/rocky
+    container_name: srv-app-01
+    hostname: srv-app-01
+    init: true              # tini как PID 1: убирает зомби-процессы (нет systemd)
+    networks:
+      corp_net:
+        ipv4_address: 172.30.20.13
+    restart: unless-stopped
+
+  # ---------- dmz_iot (только эта сеть!) ----------
+  kiosk-lobby:              # Debian 12: киоск
+    build: ./Dockerfiles/debian
+    image: cyberfleet/debian
+    container_name: kiosk-lobby
+    hostname: kiosk-lobby
+    init: true              # tini как PID 1: убирает зомби-процессы (нет systemd)
+    networks:
+      dmz_iot:
+        ipv4_address: 172.30.30.11
+    restart: unless-stopped
+
+  iot-sensor-1:             # Alpine: датчик
+    build: ./Dockerfiles/alpine
+    image: cyberfleet/alpine
+    container_name: iot-sensor-1
+    hostname: iot-sensor-1
+    init: true              # tini как PID 1: убирает зомби-процессы (нет systemd)
+    networks:
+      dmz_iot:
+        ipv4_address: 172.30.30.12
+    restart: unless-stopped
+
+  iot-cam-1:                # Debian 12 Slim: IP-камера (намеренно слабая)
+    build: ./Dockerfiles/debian-slim
+    image: cyberfleet/debian-slim
+    container_name: iot-cam-1
+    hostname: iot-cam-1
+    init: true              # tini как PID 1: убирает зомби-процессы (нет systemd)
+    networks:
+      dmz_iot:
+        ipv4_address: 172.30.30.13
+    restart: unless-stopped

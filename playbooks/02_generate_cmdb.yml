@@ -1,0 +1,97 @@
+---
+# 02_generate_cmdb.yml — Неделя 2: живой CMDB-портал (http://localhost:8080)
+#
+# Собирает Osquery SQL-запросами со всех узлов:
+#   имя хоста, IP и зону, ОС и ядро, CPU/RAM, число пакетов (deb_packages / rpm_packages),
+#   пользователей с правом входа (users), открытые порты (listening_ports).
+# На Alpine те же поля отдаёт cf-telemetry.
+# Результат: /var/www/html/index.html на hq-controller (Nginx -> порт 8080).
+#
+# Запуск: ansible-playbook playbooks/02_generate_cmdb.yml
+# (cron на hq-controller тоже запускает его каждые 5 минут — см. 04_hardening.yml)
+
+- name: CMDB | collect inventory with Osquery SQL
+  hosts: all:localhost
+  become: true
+  gather_facts: true
+  vars:
+    cmdb_queries:
+      system: "SELECT hostname, cpu_brand, cpu_logical_cores, physical_memory FROM system_info;"
+      os: "SELECT name, version, platform FROM os_version;"
+      kernel: "SELECT version FROM kernel_info;"
+      users: >-
+        SELECT username, uid, gid, directory, shell FROM users
+        WHERE shell NOT LIKE '%nologin' AND shell NOT LIKE '%/false'
+          AND shell NOT LIKE '%/sync' AND shell NOT LIKE '%/shutdown' AND shell NOT LIKE '%/halt';
+      ports: >-
+        SELECT DISTINCT lp.port, lp.protocol, lp.address, p.name AS process, p.pid
+        FROM listening_ports lp LEFT JOIN processes p ON lp.pid = p.pid
+        WHERE lp.port != 0 AND lp.address != '127.0.0.11';
+      interfaces: "SELECT interface, address FROM interface_addresses WHERE address LIKE '172.30.%';"
+      uptime: "SELECT total_seconds FROM uptime;"
+    package_query:
+      Debian: "SELECT COUNT(*) AS count, 'dpkg' AS manager FROM deb_packages;"
+      RedHat: "SELECT COUNT(*) AS count, 'rpm' AS manager FROM rpm_packages;"
+  tasks:
+    - name: Osquery SQL queries
+      ansible.builtin.command:
+        argv: [osqueryi, --json, "{{ item.value }}"]
+      loop: "{{ cmdb_queries | combine({'packages': package_query[ansible_facts['os_family']]}) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      register: oq
+      changed_when: false
+      when: use_osquery | bool
+
+    - name: Build inventory record (Osquery hosts)
+      ansible.builtin.set_fact:
+        cmdb_record: >-
+          {{ dict(oq.results | map(attribute='item.key')
+                  | zip(oq.results | map(attribute='stdout') | map('from_json')))
+             | combine({'source': 'osquery'}) }}
+      when: use_osquery | bool
+
+    - name: Lightweight telemetry (Alpine)
+      ansible.builtin.command: /usr/local/bin/cf-telemetry inventory
+      register: tel
+      changed_when: false
+      when: not (use_osquery | bool)
+
+    - name: Build inventory record (Alpine)
+      ansible.builtin.set_fact:
+        cmdb_record: "{{ tel.stdout | from_json }}"
+      when: not (use_osquery | bool)
+
+    - name: Add zone, groups and Ansible facts
+      ansible.builtin.set_fact:
+        cmdb_record: >-
+          {{ cmdb_record | combine({
+               'zone': cf_zone,
+               'groups': group_names,
+               'os_family': ansible_facts['os_family'],
+               'pretty_os': ansible_facts['distribution'] ~ ' ' ~ ansible_facts['distribution_version'],
+               'collected_at': now(utc=true).strftime('%Y-%m-%d %H:%M:%S UTC')
+             }) }}
+
+- name: CMDB | save and render dashboard on hq-controller
+  hosts: localhost
+  become: true
+  gather_facts: false
+  tasks:
+    - name: State directory
+      ansible.builtin.file:
+        path: "{{ cf_state_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Save inventory snapshot (JSON)
+      ansible.builtin.copy:
+        dest: "{{ cf_state_dir }}/inventory.json"
+        mode: "0600"
+        content: >-
+          {{ dict((groups['all'] + ['localhost'])
+                  | zip((groups['all'] + ['localhost'])
+                        | map('extract', hostvars, 'cmdb_record'))) | to_nice_json }}
+
+    - name: Render dashboard
+      ansible.builtin.include_tasks: tasks/render_dashboard.yml

@@ -1,0 +1,546 @@
+
+PLAY [IR | start] **************************************************************
+
+TASK [Start time] **************************************************************
+ok: [localhost]
+
+PLAY [IR | containment and eradication on every device] ************************
+
+TASK [Find unauthorized UID=0 accounts] ****************************************
+ok: [iot-cam-1]
+ok: [iot-sensor-1]
+ok: [backup-vault]
+ok: [srv-app-01]
+ok: [kiosk-lobby]
+ok: [ws-fin-01]
+ok: [ws-dev-01]
+
+TASK [Remove backdoor accounts from passwd / shadow / group / gshadow] *********
+skipping: [backup-vault]
+skipping: [ws-dev-01]
+skipping: [ws-fin-01]
+skipping: [srv-app-01]
+skipping: [kiosk-lobby]
+skipping: [iot-sensor-1]
+changed: [iot-cam-1] => (item=shadow_admin @ /etc/passwd)
+ok: [iot-cam-1] => (item=shadow_admin @ /etc/shadow)
+ok: [iot-cam-1] => (item=shadow_admin @ /etc/group)
+ok: [iot-cam-1] => (item=shadow_admin @ /etc/gshadow)
+
+TASK [Quarantine and kill processes running from DELETED binaries or temp dirs] ***
+ok: [kiosk-lobby]
+ok: [iot-sensor-1]
+ok: [ws-dev-01]
+ok: [backup-vault]
+ok: [iot-cam-1]
+ok: [ws-fin-01]
+changed: [srv-app-01]
+
+TASK [Close unauthorized listening ports (kill the owning process)] ************
+ok: [ws-fin-01]
+changed: [kiosk-lobby]
+ok: [iot-sensor-1]
+ok: [ws-dev-01]
+ok: [backup-vault]
+ok: [iot-cam-1]
+ok: [srv-app-01]
+
+TASK [Device actions] **********************************************************
+ok: [backup-vault]
+ok: [ws-dev-01]
+ok: [ws-fin-01]
+ok: [srv-app-01]
+ok: [iot-sensor-1]
+ok: [kiosk-lobby]
+ok: [iot-cam-1]
+
+PLAY [IR | fetch latest encrypted backup of ws-fin-01 from backup-vault] *******
+
+TASK [Latest ws-fin-01 archive] ************************************************
+ok: [backup-vault]
+
+TASK [Fetch ciphertext + checksum to hq-controller] ****************************
+changed: [backup-vault] => (item=/srv/backups/ws-fin-01/cf_ws-fin-01_20261121T170634Z.tar.gz.enc)
+changed: [backup-vault] => (item=/srv/backups/ws-fin-01/cf_ws-fin-01_20261121T170634Z.tar.gz.enc.sha256)
+
+PLAY [IR | verify and decrypt on hq-controller] ********************************
+
+TASK [Verify SHA-256 and decrypt AES-256] **************************************
+changed: [localhost]
+
+TASK [Backup used] *************************************************************
+ok: [localhost] => {
+    "msg": "Using cf_ws-fin-01_20261121T170634Z.tar.gz.enc: SHA-256 OK, decrypted, 3 files"
+}
+
+PLAY [IR | restore accountant documents on ws-fin-01] **************************
+
+TASK [Upload decrypted archive (private)] **************************************
+changed: [ws-fin-01]
+
+TASK [Restore missing files (existing newer files are kept)] *******************
+changed: [ws-fin-01]
+
+TASK [Files now in ~/Raamatupidamine_2026] *************************************
+ok: [ws-fin-01]
+
+TASK [Record restore action] ***************************************************
+ok: [ws-fin-01]
+
+TASK [Show restored files] *****************************************************
+ok: [ws-fin-01] => {
+    "fin_ls.stdout_lines": [
+        "total 12",
+        "-rw------- 1 raamatupidaja raamatupidaja 299 Nov 21 17:05 arved_2026_Q1.csv",
+        "-rw------- 1 raamatupidaja raamatupidaja 222 Nov 21 17:05 eelarve_2026.txt",
+        "-rw------- 1 raamatupidaja raamatupidaja 169 Nov 21 17:05 palgafond_2026.csv"
+    ]
+}
+
+PLAY [IR | clean staging and write incident record] ****************************
+
+TASK [Remove decrypted plaintext from controller] ******************************
+changed: [localhost]
+
+TASK [Collect actions from all devices] ****************************************
+ok: [localhost]
+
+TASK [Write incident.json (shown on the dashboard)] ****************************
+changed: [localhost] => (item=incident.json)
+changed: [localhost] => (item=incident_20261121T170815Z.json)
+
+TASK [Incident response summary] ***********************************************
+ok: [localhost] => {
+    "msg": [
+        "iot-cam-1: removed backdoor UID=0 account shadow_admin",
+        "kiosk-lobby: closed port 4444/tcp: killed 'python3' (pid 1976)",
+        "srv-app-01: killed malware 'sh' (pid 3148, binary /usr/bin/bash), sample quarantined sha256=ec6d007d48ef11bc…",
+        "srv-app-01: killed malware 'xmr_miner' (pid 3151, binary /tmp/xmr_miner (deleted)), sample quarantined sha256=1ee8758315a9efc1…",
+        "ws-fin-01: restored 3 finance file(s) from AES-256 backup cf_ws-fin-01_20261121T170634Z.tar.gz.enc"
+    ]
+}
+
+PLAY [Hardening | SSH, banners, permissions] ***********************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [iot-cam-1]
+ok: [iot-sensor-1]
+ok: [srv-app-01]
+ok: [backup-vault]
+ok: [kiosk-lobby]
+ok: [ws-fin-01]
+ok: [ws-dev-01]
+
+TASK [Login banners (/etc/issue.net, /etc/motd)] *******************************
+ok: [backup-vault] => (item=/etc/issue.net)
+ok: [iot-cam-1] => (item=/etc/issue.net)
+ok: [ws-dev-01] => (item=/etc/issue.net)
+ok: [ws-fin-01] => (item=/etc/issue.net)
+ok: [kiosk-lobby] => (item=/etc/issue.net)
+ok: [srv-app-01] => (item=/etc/issue.net)
+ok: [iot-sensor-1] => (item=/etc/issue.net)
+ok: [backup-vault] => (item=/etc/motd)
+ok: [iot-cam-1] => (item=/etc/motd)
+ok: [ws-dev-01] => (item=/etc/motd)
+ok: [kiosk-lobby] => (item=/etc/motd)
+ok: [ws-fin-01] => (item=/etc/motd)
+ok: [srv-app-01] => (item=/etc/motd)
+ok: [iot-sensor-1] => (item=/etc/motd)
+
+TASK [sshd drop-in directory] **************************************************
+ok: [backup-vault]
+ok: [iot-cam-1]
+ok: [kiosk-lobby]
+ok: [ws-fin-01]
+ok: [srv-app-01]
+ok: [iot-sensor-1]
+ok: [ws-dev-01]
+
+TASK [sshd_config includes drop-ins] *******************************************
+ok: [iot-cam-1]
+ok: [kiosk-lobby]
+ok: [srv-app-01]
+ok: [ws-fin-01]
+ok: [ws-dev-01]
+ok: [backup-vault]
+ok: [iot-sensor-1]
+
+TASK [Harden main sshd_config] *************************************************
+ok: [backup-vault] => (item={'key': 'PasswordAuthentication', 'value': 'no'})
+ok: [ws-dev-01] => (item={'key': 'PasswordAuthentication', 'value': 'no'})
+ok: [ws-fin-01] => (item={'key': 'PasswordAuthentication', 'value': 'no'})
+ok: [kiosk-lobby] => (item={'key': 'PasswordAuthentication', 'value': 'no'})
+ok: [iot-cam-1] => (item={'key': 'PasswordAuthentication', 'value': 'no'})
+ok: [backup-vault] => (item={'key': 'KbdInteractiveAuthentication', 'value': 'no'})
+ok: [ws-fin-01] => (item={'key': 'KbdInteractiveAuthentication', 'value': 'no'})
+ok: [srv-app-01] => (item={'key': 'PasswordAuthentication', 'value': 'no'})
+ok: [iot-sensor-1] => (item={'key': 'PasswordAuthentication', 'value': 'no'})
+ok: [kiosk-lobby] => (item={'key': 'KbdInteractiveAuthentication', 'value': 'no'})
+ok: [backup-vault] => (item={'key': 'PermitEmptyPasswords', 'value': 'no'})
+ok: [ws-dev-01] => (item={'key': 'KbdInteractiveAuthentication', 'value': 'no'})
+ok: [ws-fin-01] => (item={'key': 'PermitEmptyPasswords', 'value': 'no'})
+ok: [iot-cam-1] => (item={'key': 'KbdInteractiveAuthentication', 'value': 'no'})
+ok: [srv-app-01] => (item={'key': 'KbdInteractiveAuthentication', 'value': 'no'})
+ok: [kiosk-lobby] => (item={'key': 'PermitEmptyPasswords', 'value': 'no'})
+ok: [backup-vault] => (item={'key': 'PermitRootLogin', 'value': 'no'})
+ok: [ws-dev-01] => (item={'key': 'PermitEmptyPasswords', 'value': 'no'})
+ok: [iot-sensor-1] => (item={'key': 'KbdInteractiveAuthentication', 'value': 'no'})
+ok: [ws-fin-01] => (item={'key': 'PermitRootLogin', 'value': 'no'})
+ok: [iot-cam-1] => (item={'key': 'PermitEmptyPasswords', 'value': 'no'})
+ok: [srv-app-01] => (item={'key': 'PermitEmptyPasswords', 'value': 'no'})
+ok: [backup-vault] => (item={'key': 'PubkeyAuthentication', 'value': 'yes'})
+ok: [kiosk-lobby] => (item={'key': 'PermitRootLogin', 'value': 'no'})
+ok: [iot-cam-1] => (item={'key': 'PermitRootLogin', 'value': 'no'})
+ok: [ws-dev-01] => (item={'key': 'PermitRootLogin', 'value': 'no'})
+ok: [ws-fin-01] => (item={'key': 'PubkeyAuthentication', 'value': 'yes'})
+ok: [iot-sensor-1] => (item={'key': 'PermitEmptyPasswords', 'value': 'no'})
+ok: [kiosk-lobby] => (item={'key': 'PubkeyAuthentication', 'value': 'yes'})
+ok: [srv-app-01] => (item={'key': 'PermitRootLogin', 'value': 'no'})
+ok: [backup-vault] => (item={'key': 'MaxAuthTries', 'value': '3'})
+ok: [ws-dev-01] => (item={'key': 'PubkeyAuthentication', 'value': 'yes'})
+ok: [iot-cam-1] => (item={'key': 'PubkeyAuthentication', 'value': 'yes'})
+ok: [iot-sensor-1] => (item={'key': 'PermitRootLogin', 'value': 'no'})
+ok: [ws-fin-01] => (item={'key': 'MaxAuthTries', 'value': '3'})
+ok: [iot-cam-1] => (item={'key': 'MaxAuthTries', 'value': '3'})
+ok: [srv-app-01] => (item={'key': 'PubkeyAuthentication', 'value': 'yes'})
+ok: [kiosk-lobby] => (item={'key': 'MaxAuthTries', 'value': '3'})
+ok: [ws-dev-01] => (item={'key': 'MaxAuthTries', 'value': '3'})
+ok: [backup-vault] => (item={'key': 'LoginGraceTime', 'value': '30'})
+ok: [ws-fin-01] => (item={'key': 'LoginGraceTime', 'value': '30'})
+ok: [iot-cam-1] => (item={'key': 'LoginGraceTime', 'value': '30'})
+ok: [iot-sensor-1] => (item={'key': 'PubkeyAuthentication', 'value': 'yes'})
+ok: [kiosk-lobby] => (item={'key': 'LoginGraceTime', 'value': '30'})
+ok: [ws-fin-01] => (item={'key': 'X11Forwarding', 'value': 'no'})
+ok: [backup-vault] => (item={'key': 'X11Forwarding', 'value': 'no'})
+ok: [ws-dev-01] => (item={'key': 'LoginGraceTime', 'value': '30'})
+ok: [srv-app-01] => (item={'key': 'MaxAuthTries', 'value': '3'})
+ok: [iot-cam-1] => (item={'key': 'X11Forwarding', 'value': 'no'})
+ok: [ws-dev-01] => (item={'key': 'X11Forwarding', 'value': 'no'})
+ok: [ws-fin-01] => (item={'key': 'ClientAliveInterval', 'value': '300'})
+ok: [kiosk-lobby] => (item={'key': 'X11Forwarding', 'value': 'no'})
+ok: [iot-sensor-1] => (item={'key': 'MaxAuthTries', 'value': '3'})
+ok: [backup-vault] => (item={'key': 'ClientAliveInterval', 'value': '300'})
+ok: [srv-app-01] => (item={'key': 'LoginGraceTime', 'value': '30'})
+ok: [ws-dev-01] => (item={'key': 'ClientAliveInterval', 'value': '300'})
+ok: [ws-fin-01] => (item={'key': 'ClientAliveCountMax', 'value': '2'})
+ok: [kiosk-lobby] => (item={'key': 'ClientAliveInterval', 'value': '300'})
+ok: [iot-cam-1] => (item={'key': 'ClientAliveInterval', 'value': '300'})
+ok: [srv-app-01] => (item={'key': 'X11Forwarding', 'value': 'no'})
+ok: [backup-vault] => (item={'key': 'ClientAliveCountMax', 'value': '2'})
+ok: [ws-dev-01] => (item={'key': 'ClientAliveCountMax', 'value': '2'})
+ok: [srv-app-01] => (item={'key': 'ClientAliveInterval', 'value': '300'})
+ok: [iot-cam-1] => (item={'key': 'ClientAliveCountMax', 'value': '2'})
+ok: [kiosk-lobby] => (item={'key': 'ClientAliveCountMax', 'value': '2'})
+ok: [iot-sensor-1] => (item={'key': 'LoginGraceTime', 'value': '30'})
+ok: [ws-dev-01] => (item={'key': 'Banner', 'value': '/etc/issue.net'})
+ok: [ws-fin-01] => (item={'key': 'Banner', 'value': '/etc/issue.net'})
+ok: [backup-vault] => (item={'key': 'Banner', 'value': '/etc/issue.net'})
+ok: [srv-app-01] => (item={'key': 'ClientAliveCountMax', 'value': '2'})
+ok: [kiosk-lobby] => (item={'key': 'Banner', 'value': '/etc/issue.net'})
+ok: [iot-cam-1] => (item={'key': 'Banner', 'value': '/etc/issue.net'})
+ok: [iot-sensor-1] => (item={'key': 'X11Forwarding', 'value': 'no'})
+ok: [srv-app-01] => (item={'key': 'Banner', 'value': '/etc/issue.net'})
+ok: [iot-sensor-1] => (item={'key': 'ClientAliveInterval', 'value': '300'})
+ok: [iot-sensor-1] => (item={'key': 'ClientAliveCountMax', 'value': '2'})
+ok: [iot-sensor-1] => (item={'key': 'Banner', 'value': '/etc/issue.net'})
+
+TASK [Hardening drop-in 00-cyberfleet.conf (first match wins — overrides any later drop-in)] ***
+ok: [ws-dev-01]
+ok: [backup-vault]
+ok: [ws-fin-01]
+ok: [iot-cam-1]
+ok: [kiosk-lobby]
+ok: [iot-sensor-1]
+ok: [srv-app-01]
+
+TASK [Validate full sshd configuration] ****************************************
+ok: [backup-vault]
+ok: [ws-dev-01]
+ok: [ws-fin-01]
+ok: [kiosk-lobby]
+ok: [iot-cam-1]
+ok: [srv-app-01]
+ok: [iot-sensor-1]
+
+TASK [Critical file permissions] ***********************************************
+ok: [backup-vault] => (item={'path': '/etc/passwd', 'mode': '0644'})
+ok: [kiosk-lobby] => (item={'path': '/etc/passwd', 'mode': '0644'})
+ok: [ws-dev-01] => (item={'path': '/etc/passwd', 'mode': '0644'})
+ok: [iot-cam-1] => (item={'path': '/etc/passwd', 'mode': '0644'})
+ok: [ws-fin-01] => (item={'path': '/etc/passwd', 'mode': '0644'})
+ok: [srv-app-01] => (item={'path': '/etc/passwd', 'mode': '0644'})
+ok: [kiosk-lobby] => (item={'path': '/etc/ssh/sshd_config', 'mode': '0600'})
+ok: [ws-dev-01] => (item={'path': '/etc/ssh/sshd_config', 'mode': '0600'})
+ok: [iot-sensor-1] => (item={'path': '/etc/passwd', 'mode': '0644'})
+ok: [backup-vault] => (item={'path': '/etc/ssh/sshd_config', 'mode': '0600'})
+ok: [kiosk-lobby] => (item={'path': '/etc/sudoers', 'mode': '0440'})
+ok: [srv-app-01] => (item={'path': '/etc/ssh/sshd_config', 'mode': '0600'})
+ok: [ws-fin-01] => (item={'path': '/etc/ssh/sshd_config', 'mode': '0600'})
+ok: [iot-cam-1] => (item={'path': '/etc/ssh/sshd_config', 'mode': '0600'})
+ok: [backup-vault] => (item={'path': '/etc/sudoers', 'mode': '0440'})
+ok: [ws-dev-01] => (item={'path': '/etc/sudoers', 'mode': '0440'})
+ok: [iot-sensor-1] => (item={'path': '/etc/ssh/sshd_config', 'mode': '0600'})
+ok: [iot-cam-1] => (item={'path': '/etc/sudoers', 'mode': '0440'})
+ok: [srv-app-01] => (item={'path': '/etc/sudoers', 'mode': '0440'})
+ok: [ws-fin-01] => (item={'path': '/etc/sudoers', 'mode': '0440'})
+ok: [iot-sensor-1] => (item={'path': '/etc/sudoers', 'mode': '0440'})
+
+TASK [Lock root password (no password logins for root)] ************************
+ok: [kiosk-lobby]
+ok: [ws-dev-01]
+ok: [backup-vault]
+ok: [iot-cam-1]
+ok: [srv-app-01]
+ok: [ws-fin-01]
+ok: [iot-sensor-1]
+
+PLAY [Hardening | remove dangerous tools from kiosk and IoT] *******************
+
+TASK [Gathering Facts] *********************************************************
+ok: [kiosk-lobby]
+ok: [iot-cam-1]
+ok: [iot-sensor-1]
+
+TASK [Remove packages (Debian / Debian Slim)] **********************************
+skipping: [iot-sensor-1]
+ok: [kiosk-lobby]
+ok: [iot-cam-1]
+
+TASK [Remove packages (Alpine)] ************************************************
+skipping: [kiosk-lobby]
+skipping: [iot-cam-1]
+ok: [iot-sensor-1]
+
+TASK [Remove BusyBox nc/telnet applet links] ***********************************
+ok: [kiosk-lobby] => (item=/usr/bin/nc)
+ok: [iot-cam-1] => (item=/usr/bin/nc)
+ok: [iot-sensor-1] => (item=/usr/bin/nc)
+ok: [kiosk-lobby] => (item=/usr/bin/telnet)
+ok: [iot-cam-1] => (item=/usr/bin/telnet)
+ok: [iot-sensor-1] => (item=/usr/bin/telnet)
+ok: [iot-cam-1] => (item=/usr/bin/netcat)
+ok: [kiosk-lobby] => (item=/usr/bin/netcat)
+ok: [iot-sensor-1] => (item=/usr/bin/netcat)
+ok: [iot-cam-1] => (item=/bin/nc)
+ok: [kiosk-lobby] => (item=/bin/nc)
+ok: [iot-cam-1] => (item=/bin/telnet)
+ok: [kiosk-lobby] => (item=/bin/telnet)
+ok: [iot-sensor-1] => (item=/bin/nc)
+ok: [iot-sensor-1] => (item=/bin/telnet)
+
+TASK [Verify no banned tools left] *********************************************
+ok: [kiosk-lobby]
+ok: [iot-cam-1]
+ok: [iot-sensor-1]
+
+PLAY [Hardening | drift remediation for user profiles (kiosk, accountant)] *****
+
+TASK [Gathering Facts] *********************************************************
+ok: [kiosk-lobby]
+ok: [ws-fin-01]
+
+TASK [Kiosk — restricted shell enforced] ***************************************
+skipping: [ws-fin-01]
+ok: [kiosk-lobby]
+
+TASK [Kiosk — profile files owned by root, read-only] **************************
+skipping: [ws-fin-01] => (item=.bash_profile) 
+skipping: [ws-fin-01] => (item=.bashrc) 
+skipping: [ws-fin-01]
+ok: [kiosk-lobby] => (item=.bash_profile)
+ok: [kiosk-lobby] => (item=.bashrc)
+
+TASK [Kiosk — home and bin owned by root] **************************************
+skipping: [ws-fin-01] => (item=/home/kiosk) 
+skipping: [ws-fin-01] => (item=/home/kiosk/bin) 
+skipping: [ws-fin-01]
+ok: [kiosk-lobby] => (item=/home/kiosk)
+ok: [kiosk-lobby] => (item=/home/kiosk/bin)
+
+TASK [No sudo for kiosk / accountant] ******************************************
+ok: [kiosk-lobby] => (item=kiosk)
+ok: [ws-fin-01] => (item=kiosk)
+ok: [kiosk-lobby] => (item=raamatupidaja)
+ok: [ws-fin-01] => (item=raamatupidaja)
+
+TASK [Accountant — documents folder private (0700)] ****************************
+skipping: [kiosk-lobby]
+ok: [ws-fin-01]
+
+PLAY [Self-healing | cron on hq-controller] ************************************
+
+TASK [Log directory] ***********************************************************
+ok: [localhost]
+
+TASK [Cron jobs (self-healing every 10 min, audit + CMDB every 5 min, backup nightly)] ***
+ok: [localhost]
+
+TASK [cron is running] *********************************************************
+ok: [localhost]
+
+PLAY [Audit | Osquery HIDS / FIM queries on every device] **********************
+
+TASK [Gathering Facts] *********************************************************
+ok: [iot-cam-1]
+ok: [backup-vault]
+ok: [ws-dev-01]
+ok: [kiosk-lobby]
+ok: [ws-fin-01]
+ok: [iot-sensor-1]
+ok: [srv-app-01]
+ok: [localhost]
+
+TASK [Osquery SQL (HIDS)] ******************************************************
+skipping: [iot-sensor-1] => (item=fim) 
+skipping: [iot-sensor-1] => (item=deleted_procs) 
+skipping: [iot-sensor-1] => (item=tmp_procs) 
+skipping: [iot-sensor-1] => (item=uid0) 
+ok: [backup-vault] => (item=fim)
+skipping: [iot-sensor-1] => (item=ports) 
+ok: [ws-dev-01] => (item=fim)
+skipping: [iot-sensor-1]
+ok: [ws-fin-01] => (item=fim)
+ok: [iot-cam-1] => (item=fim)
+ok: [ws-dev-01] => (item=deleted_procs)
+ok: [srv-app-01] => (item=fim)
+ok: [localhost] => (item=fim)
+ok: [backup-vault] => (item=deleted_procs)
+ok: [kiosk-lobby] => (item=fim)
+ok: [iot-cam-1] => (item=deleted_procs)
+ok: [ws-fin-01] => (item=deleted_procs)
+ok: [backup-vault] => (item=tmp_procs)
+ok: [srv-app-01] => (item=deleted_procs)
+ok: [iot-cam-1] => (item=tmp_procs)
+ok: [kiosk-lobby] => (item=deleted_procs)
+ok: [localhost] => (item=deleted_procs)
+ok: [ws-fin-01] => (item=tmp_procs)
+ok: [backup-vault] => (item=uid0)
+ok: [ws-dev-01] => (item=tmp_procs)
+ok: [srv-app-01] => (item=tmp_procs)
+ok: [kiosk-lobby] => (item=tmp_procs)
+ok: [localhost] => (item=tmp_procs)
+ok: [iot-cam-1] => (item=uid0)
+ok: [ws-dev-01] => (item=uid0)
+ok: [ws-fin-01] => (item=uid0)
+ok: [srv-app-01] => (item=uid0)
+ok: [backup-vault] => (item=ports)
+ok: [iot-cam-1] => (item=ports)
+ok: [kiosk-lobby] => (item=uid0)
+ok: [srv-app-01] => (item=ports)
+ok: [localhost] => (item=uid0)
+ok: [ws-dev-01] => (item=ports)
+ok: [ws-fin-01] => (item=ports)
+ok: [kiosk-lobby] => (item=ports)
+ok: [localhost] => (item=ports)
+
+TASK [Audit record (Osquery)] **************************************************
+ok: [backup-vault]
+ok: [ws-dev-01]
+ok: [ws-fin-01]
+ok: [srv-app-01]
+skipping: [iot-sensor-1]
+ok: [kiosk-lobby]
+ok: [iot-cam-1]
+ok: [localhost]
+
+TASK [Lightweight audit (Alpine, cf-telemetry)] ********************************
+skipping: [backup-vault]
+skipping: [ws-dev-01]
+skipping: [srv-app-01]
+skipping: [ws-fin-01]
+skipping: [kiosk-lobby]
+skipping: [iot-cam-1]
+skipping: [localhost]
+ok: [iot-sensor-1]
+
+TASK [Audit record (Alpine)] ***************************************************
+skipping: [backup-vault]
+skipping: [ws-dev-01]
+skipping: [ws-fin-01]
+skipping: [srv-app-01]
+skipping: [kiosk-lobby]
+ok: [iot-sensor-1]
+skipping: [iot-cam-1]
+skipping: [localhost]
+
+TASK [Allowed ports for this device] *******************************************
+ok: [backup-vault]
+ok: [ws-dev-01]
+ok: [ws-fin-01]
+ok: [srv-app-01]
+ok: [kiosk-lobby]
+ok: [iot-sensor-1]
+ok: [iot-cam-1]
+ok: [localhost]
+
+PLAY [Audit | evaluate findings, update dashboard] *****************************
+
+TASK [Read FIM baseline] *******************************************************
+ok: [localhost]
+
+TASK [Current baseline] ********************************************************
+ok: [localhost]
+
+TASK [Add missing hosts/files to baseline (first run = trusted state)] *********
+ok: [localhost] => (item=backup-vault)
+ok: [localhost] => (item=ws-dev-01)
+ok: [localhost] => (item=ws-fin-01)
+ok: [localhost] => (item=srv-app-01)
+ok: [localhost] => (item=kiosk-lobby)
+ok: [localhost] => (item=iot-sensor-1)
+ok: [localhost] => (item=iot-cam-1)
+ok: [localhost] => (item=localhost)
+
+TASK [Save baseline] ***********************************************************
+ok: [localhost]
+
+TASK [Evaluate alerts per device] **********************************************
+ok: [localhost] => (item=backup-vault)
+ok: [localhost] => (item=ws-dev-01)
+ok: [localhost] => (item=ws-fin-01)
+ok: [localhost] => (item=srv-app-01)
+ok: [localhost] => (item=kiosk-lobby)
+ok: [localhost] => (item=iot-sensor-1)
+ok: [localhost] => (item=iot-cam-1)
+ok: [localhost] => (item=localhost)
+
+TASK [Save audit snapshot (audit.json + history)] ******************************
+changed: [localhost] => (item=audit.json)
+changed: [localhost] => (item=audit_20261121T170834Z.json)
+
+TASK [Render dashboard (alerts in red)] ****************************************
+included: /ansible/playbooks/tasks/render_dashboard.yml for localhost
+
+TASK [Read state snapshots] ****************************************************
+ok: [localhost] => (item=inventory)
+ok: [localhost] => (item=audit)
+ok: [localhost] => (item=incident)
+
+TASK [Parse snapshots] *********************************************************
+ok: [localhost] => (item=inventory)
+ok: [localhost] => (item=audit)
+ok: [localhost] => (item=incident)
+
+TASK [Web root] ****************************************************************
+ok: [localhost]
+
+TASK [Write /var/www/html/index.html] ******************************************
+changed: [localhost]
+
+TASK [Audit summary] ***********************************************************
+ok: [localhost] => {
+    "msg": [
+        "🟢 No findings — all devices clean"
+    ]
+}
+
+PLAY RECAP *********************************************************************
+backup-vault               : ok=19   changed=1    unreachable=0    failed=0    skipped=3    rescued=0    ignored=0   
+iot-cam-1                  : ok=22   changed=1    unreachable=0    failed=0    skipped=3    rescued=0    ignored=0   
+iot-sensor-1               : ok=21   changed=0    unreachable=0    failed=0    skipped=4    rescued=0    ignored=0   
+kiosk-lobby                : ok=26   changed=1    unreachable=0    failed=0    skipped=5    rescued=0    ignored=0   
+localhost                  : ok=26   changed=5    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   
+srv-app-01                 : ok=17   changed=1    unreachable=0    failed=0    skipped=3    rescued=0    ignored=0   
+ws-dev-01                  : ok=17   changed=0    unreachable=0    failed=0    skipped=3    rescued=0    ignored=0   
+ws-fin-01                  : ok=25   changed=2    unreachable=0    failed=0    skipped=6    rescued=0    ignored=0   
+

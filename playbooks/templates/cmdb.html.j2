@@ -1,0 +1,163 @@
+{# CyberFleet 2026 — CMDB & Turvaseire Armatuurlaud. Генерируется Ansible (02 / 05 / 07). #}
+{%- set inv = dash.inventory | default({}) -%}
+{%- set aud = dash.audit | default({}) -%}
+{%- set ir = dash.incident | default({}) -%}
+{%- set audit_hosts = aud.hosts | default({}) -%}
+{%- set all_hosts = (inv.keys() | list + audit_hosts.keys() | list) | unique | sort -%}
+{%- set ns = namespace(alerts=0, crit=0) -%}
+{%- for h in audit_hosts -%}
+  {%- set ns.alerts = ns.alerts + (audit_hosts[h].alerts | default([]) | length) -%}
+{%- endfor -%}
+{%- macro human_bytes(b) -%}
+  {%- set b = b | int -%}
+  {%- if b >= 1073741824 -%}{{ '%.1f' | format(b / 1073741824) }} GB{%- elif b > 0 -%}{{ (b / 1048576) | round | int }} MB{%- else -%}—{%- endif -%}
+{%- endmacro -%}
+{%- macro proto(p) -%}{{ 'tcp' if p | string == '6' else 'udp' if p | string == '17' else p }}{%- endmacro -%}
+<!doctype html>
+<html lang="et">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="60">
+<title>CyberFleet CMDB</title>
+<style>
+  :root { --bg:#0f1720; --panel:#16212d; --line:#263445; --text:#e6edf3; --muted:#8b9bb0;
+          --ok:#2ea043; --ok-bg:#12301c; --bad:#f85149; --bad-bg:#3d1214; --warn:#d29922; --accent:#4aa3ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  header { padding:20px 24px; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:16px; align-items:baseline; justify-content:space-between; }
+  h1 { margin:0; font-size:20px; } h1 small { color:var(--muted); font-weight:400; font-size:13px; margin-left:8px; }
+  h2 { font-size:15px; margin:28px 0 10px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+  main { padding:0 24px 40px; max-width:1500px; margin:0 auto; }
+  .meta { color:var(--muted); font-size:12px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin-top:20px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  .card .n { font-size:26px; font-weight:600; } .card .l { color:var(--muted); font-size:12px; }
+  .card.bad { border-color:var(--bad); background:var(--bad-bg); } .card.bad .n { color:var(--bad); }
+  .card.ok .n { color:var(--ok); }
+  .wrap { overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
+  table { width:100%; border-collapse:collapse; background:var(--panel); }
+  th, td { padding:8px 10px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+  th { font-size:12px; color:var(--muted); font-weight:600; background:#1b2836; white-space:nowrap; }
+  tr:last-child td { border-bottom:0; }
+  td.num { font-variant-numeric:tabular-nums; text-align:right; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:600; white-space:nowrap; }
+  .pill.ok { background:var(--ok-bg); color:var(--ok); } .pill.bad { background:var(--bad-bg); color:var(--bad); }
+  .pill.zone { background:#1d2f45; color:var(--accent); font-weight:500; }
+  .port { display:inline-block; margin:1px 3px 1px 0; padding:0 6px; border-radius:4px; background:#1d2f45; font-size:12px; font-family:ui-monospace,monospace; }
+  .port.bad { background:var(--bad); color:#fff; font-weight:700; }
+  tr.alert td { background:var(--bad-bg); color:#ffd7d5; }
+  .alerts { border:2px solid var(--bad); border-radius:8px; background:var(--bad-bg); padding:10px 16px; }
+  .alerts li { margin:4px 0; } .alerts b { color:#fff; }
+  .allclear { border:1px solid var(--ok); border-radius:8px; background:var(--ok-bg); padding:12px 16px; color:#b4f1c3; }
+  code, .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
+  .muted { color:var(--muted); }
+  footer { color:var(--muted); font-size:12px; margin-top:30px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>CyberFleet 2026 — CMDB &amp; Turvaseire <small>NordicTech OÜ · hq-controller</small></h1>
+  <div class="meta">
+    Inventuur: {{ inv.values() | map(attribute='collected_at') | list | max | default('—') if inv else '—' }}
+    · Audit: {{ aud.generated_at | default('—') }}
+    · Leht värskendub iga 60 s
+  </div>
+</header>
+<main>
+
+<div class="cards">
+  <div class="card"><div class="n">{{ all_hosts | length }}</div><div class="l">seadet (devices)</div></div>
+  <div class="card"><div class="n">{{ inv.values() | selectattr('os', 'defined') | map(attribute='os') | map('first') | map(attribute='name') | unique | list | length if inv else 0 }}</div><div class="l">operatsioonisüsteemi</div></div>
+  <div class="card {{ 'bad' if ns.alerts > 0 else 'ok' }}"><div class="n">{{ ns.alerts if aud else '—' }}</div><div class="l">turvahäiret (alerts)</div></div>
+  <div class="card"><div class="n">{{ inv.values() | selectattr('source', 'equalto', 'osquery') | list | length if inv else 0 }}</div><div class="l">Osquery agenti</div></div>
+  <div class="card"><div class="n">{{ ir.duration_s | default('—') }}{{ ' s' if ir.duration_s is defined else '' }}</div><div class="l">viimane taaste (07)</div></div>
+</div>
+
+<h2>Turvahäired / Security alerts</h2>
+{% if not aud %}
+  <p class="muted">Audit pole veel käivitatud: <code>ansible-playbook playbooks/05_security_audit.yml</code></p>
+{% elif ns.alerts > 0 %}
+  <div class="alerts"><ul>
+  {% for h in audit_hosts | sort %}{% for a in audit_hosts[h].alerts | default([]) %}
+    <li><b>{{ h }}</b> · {{ a.type }} — {{ a.message }}</li>
+  {% endfor %}{% endfor %}
+  </ul></div>
+{% else %}
+  <div class="allclear">✔ Kõik kontrollid rohelised: FIM räsid vastavad baasjoonele, kustutatud binaariga protsesse ega volitamata UID=0 kontosid pole, avatud on ainult lubatud pordid.</div>
+{% endif %}
+
+<h2>Seadmepark / Inventory (Osquery SQL)</h2>
+<div class="wrap"><table>
+  <tr><th>Seade</th><th>Tsoon</th><th>IP</th><th>OS</th><th>Tuum</th><th>CPU</th><th>RAM</th><th>Paketid</th><th>Kasutajad (login)</th><th>Avatud pordid</th><th>Agent</th><th>Turve</th></tr>
+  {% for h in all_hosts %}
+  {%- set r = inv[h] | default({}) -%}
+  {%- set a = audit_hosts[h] | default({}) -%}
+  {%- set bad = (a.alerts | default([]) | length) > 0 -%}
+  {%- set allowed = a.allowed_ports | default([]) | map('string') | list -%}
+  <tr class="{{ 'alert' if bad else '' }}">
+    <td><b>{{ 'hq-controller' if h == 'localhost' else h }}</b></td>
+    <td><span class="pill zone">{{ r.zone | default('—') }}</span></td>
+    <td class="mono">{{ r.interfaces | default([]) | map(attribute='address') | join(', ') or '—' }}</td>
+    <td>{% if r.os is defined and r.os %}{% set o = r.os[0] %}{{ o.version if o.name in o.version else o.name ~ ' ' ~ o.version }}{% else %}{{ r.pretty_os | default('—') }}{% endif %}</td>
+    <td class="mono">{{ r.kernel[0].version if r.kernel is defined and r.kernel else '—' }}</td>
+    <td>{{ r.system[0].cpu_logical_cores if r.system is defined and r.system else '—' }} vCPU</td>
+    <td class="num">{{ human_bytes(r.system[0].physical_memory) if r.system is defined and r.system else '—' }}</td>
+    <td class="num">{{ r.packages[0].count if r.packages is defined and r.packages else '—' }} <span class="muted">{{ r.packages[0].manager if r.packages is defined and r.packages else '' }}</span></td>
+    <td class="mono">{{ r.users | default([]) | map(attribute='username') | join(', ') }}</td>
+    <td>
+      {%- for p in r.ports | default([]) | sort(attribute='port') -%}
+        {%- set is_bad = allowed and (p.port | string) not in allowed -%}
+        <span class="port {{ 'bad' if is_bad else '' }}" title="{{ p.process | default('') }} {{ p.address }}">{{ p.port }}/{{ proto(p.protocol) }}</span>
+      {%- endfor -%}
+    </td>
+    <td>{{ r.source | default('—') }}</td>
+    <td>{% if not a %}<span class="muted">—</span>{% elif bad %}<span class="pill bad">✖ {{ a.alerts | length }} häiret</span>{% else %}<span class="pill ok">✔ OK</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+
+{% if aud %}
+<h2>HIDS / FIM — kriitiliste failide SHA-256 (Osquery <code>hash</code> tabel)</h2>
+<div class="wrap"><table>
+  <tr><th>Seade</th><th>Fail</th><th>SHA-256 (praegu)</th><th>Baasjoon</th><th>Staatus</th></tr>
+  {% for h in audit_hosts | sort %}{% for f in audit_hosts[h].fim | default([]) %}
+  {%- set base = (audit_hosts[h].fim_baseline | default({}))[f.path] | default('') -%}
+  {%- set changed = base and base != f.sha256 -%}
+  <tr class="{{ 'alert' if changed else '' }}">
+    <td>{{ 'hq-controller' if h == 'localhost' else h }}</td><td class="mono">{{ f.path }}</td>
+    <td class="mono">{{ f.sha256[:16] }}…</td><td class="mono">{{ base[:16] ~ '…' if base else 'uus' }}</td>
+    <td>{% if changed %}<span class="pill bad">MUUDETUD</span>{% else %}<span class="pill ok">OK</span>{% endif %}</td>
+  </tr>
+  {% endfor %}{% endfor %}
+</table></div>
+
+<h2>Pahavarajaht — protsessid kustutatud binaariga (<code>processes WHERE on_disk = 0</code>) ja UID=0 kontod</h2>
+<div class="wrap"><table>
+  <tr><th>Seade</th><th>Leid</th><th>Detailid</th></tr>
+  {% set ns2 = namespace(rows=0) %}
+  {% for h in audit_hosts | sort %}
+    {% for p in audit_hosts[h].deleted_procs | default([]) %}{% set ns2.rows = ns2.rows + 1 %}
+    <tr class="alert"><td>{{ h }}</td><td>Kustutatud binaariga protsess</td><td class="mono">pid={{ p.pid }} name={{ p.name }} path={{ p.path }} cmd="{{ p.cmdline }}"</td></tr>
+    {% endfor %}
+    {% for u in audit_hosts[h].uid0 | default([]) %}{% set ns2.rows = ns2.rows + 1 %}
+    <tr class="alert"><td>{{ h }}</td><td>Volitamata UID=0 konto</td><td class="mono">{{ u.username }} uid={{ u.uid }} shell={{ u.shell }}</td></tr>
+    {% endfor %}
+  {% endfor %}
+  {% if ns2.rows == 0 %}<tr><td colspan="3" class="muted">Leide pole ✔</td></tr>{% endif %}
+</table></div>
+{% endif %}
+
+{% if ir %}
+<h2>Viimane intsidendile reageerimine (07_incident_response.yml)</h2>
+<div class="wrap"><table>
+  <tr><th>Algus</th><th>Lõpp</th><th>Kestus</th><th>Tegevused</th></tr>
+  <tr><td>{{ ir.started_at }}</td><td>{{ ir.finished_at }}</td><td class="num">{{ ir.duration_s }} s</td>
+      <td><ul style="margin:0;padding-left:18px">{% for x in ir.actions | default([]) %}<li>{{ x }}</li>{% else %}<li class="muted">Midagi polnud vaja teha</li>{% endfor %}</ul></td></tr>
+</table></div>
+{% endif %}
+
+<footer>Genereeritud Ansible'iga · Osquery + cf-telemetry · {{ now(utc=true).strftime('%Y-%m-%d %H:%M:%S UTC') }}</footer>
+</main>
+</body>
+</html>

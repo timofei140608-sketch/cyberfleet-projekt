@@ -1,0 +1,33 @@
+---
+# Общий шаг для 02, 05 и 07: читает сохранённые JSON-снимки и рисует CMDB-дашборд.
+#   inventory.json  — 02_generate_cmdb.yml
+#   audit.json      — 05_security_audit.yml
+#   incident.json   — 07_incident_response.yml
+- name: Read state snapshots
+  ansible.builtin.slurp:
+    src: "{{ cf_state_dir }}/{{ item }}.json"
+  loop: [inventory, audit, incident]
+  register: snapshots
+  failed_when: false
+
+- name: Parse snapshots
+  ansible.builtin.set_fact:
+    dash: >-
+      {{ dash | default({}) | combine({
+           item.item: (item.content | b64decode | from_json) if item.content is defined else {}
+         }) }}
+  loop: "{{ snapshots.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Web root
+  ansible.builtin.file:
+    path: "{{ cf_web_root }}"
+    state: directory
+    mode: "0755"
+
+- name: Write /var/www/html/index.html
+  ansible.builtin.template:
+    src: cmdb.html.j2
+    dest: "{{ cf_web_root }}/index.html"
+    mode: "0644"

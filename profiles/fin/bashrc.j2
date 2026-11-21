@@ -1,0 +1,7 @@
+# ~/.bashrc — Raamatupidaja profiil (ws-fin-01). Hallatud Ansible'iga (03_profiles.yml)
+[ -z "$PS1" ] && return
+# Ranged failiõigused: uued failid ainult omanikule (rw-------)
+umask 0077
+PS1='\u@\h:\w\$ '
+alias ll='ls -alF'
+alias dok='cd ~/Raamatupidamine_2026'

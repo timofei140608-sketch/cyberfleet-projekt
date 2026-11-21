@@ -1,0 +1,51 @@
+# Week 1 — Zero Trust segmentation test (2026-11-21 17:15 UTC)
+
+$ docker exec iot-sensor-1 ping -c 2 ws-fin-01
+ping: bad address 'ws-fin-01'
+(exit code 1)
+
+$ docker exec iot-sensor-1 ping -c 2 backup-vault
+ping: bad address 'backup-vault'
+(exit code 1)
+
+$ docker exec kiosk-lobby ping -c 2 ws-fin-01
+ping: ws-fin-01: Name or service not known
+(exit code 2)
+
+$ docker exec iot-cam-1 ping -c 2 backup-vault
+ping: backup-vault: Name or service not known
+(exit code 2)
+
+$ docker exec ws-fin-01 ping -c 2 backup-vault
+ping: backup-vault: Name or service not known
+(exit code 2)
+
+$ docker exec hq-controller ping -c 2 ws-fin-01
+PING ws-fin-01 (172.30.20.12) 56(84) bytes of data.
+64 bytes from ws-fin-01.cyberfleet_corp_net (172.30.20.12): icmp_seq=1 ttl=64 time=0.042 ms
+64 bytes from ws-fin-01.cyberfleet_corp_net (172.30.20.12): icmp_seq=2 ttl=64 time=0.066 ms
+
+--- ws-fin-01 ping statistics ---
+2 packets transmitted, 2 received, 0% packet loss, time 1008ms
+rtt min/avg/max/mdev = 0.042/0.054/0.066/0.012 ms
+(exit code 0)
+
+$ docker exec hq-controller ping -c 2 iot-cam-1
+PING iot-cam-1 (172.30.30.13) 56(84) bytes of data.
+64 bytes from iot-cam-1.cyberfleet_dmz_iot (172.30.30.13): icmp_seq=1 ttl=64 time=0.076 ms
+64 bytes from iot-cam-1.cyberfleet_dmz_iot (172.30.30.13): icmp_seq=2 ttl=64 time=0.095 ms
+
+--- iot-cam-1 ping statistics ---
+2 packets transmitted, 2 received, 0% packet loss, time 1015ms
+rtt min/avg/max/mdev = 0.076/0.085/0.095/0.009 ms
+(exit code 0)
+
+$ docker exec hq-controller ping -c 2 backup-vault
+PING backup-vault (172.30.10.20) 56(84) bytes of data.
+64 bytes from backup-vault.cyberfleet_mgmt_net (172.30.10.20): icmp_seq=1 ttl=64 time=0.045 ms
+64 bytes from backup-vault.cyberfleet_mgmt_net (172.30.10.20): icmp_seq=2 ttl=64 time=0.081 ms
+
+--- backup-vault ping statistics ---
+2 packets transmitted, 2 received, 0% packet loss, time 1014ms
+rtt min/avg/max/mdev = 0.045/0.063/0.081/0.018 ms
+(exit code 0)

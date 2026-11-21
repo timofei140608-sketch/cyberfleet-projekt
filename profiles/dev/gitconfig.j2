@@ -1,0 +1,16 @@
+# ~/.gitconfig — Arendaja profiil. Hallatud Ansible'iga (03_profiles.yml)
+[user]
+	name = {{ dev_user }}
+	email = {{ dev_user }}@nordictech.local
+[core]
+	editor = vim
+	autocrlf = input
+[init]
+	defaultBranch = main
+[pull]
+	rebase = true
+[alias]
+	st = status
+	co = checkout
+	br = branch
+	lg = log --oneline --graph --decorate

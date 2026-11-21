@@ -1,0 +1,222 @@
+---
+# 03_profiles.yml — Неделя 2: ролевые профили пользователей ("kuldsed profiilid" из profiles/)
+#   Arendaja      (ws-dev-01):  .bashrc алиасы, .gitconfig, sudo, git/python3/vim/htop, ~/projects
+#   Raamatupidaja (ws-fin-01):  ~/Raamatupidamine_2026/, umask 0077, обычная учётка БЕЗ sudo
+#   Kiosk         (kiosk-lobby): rbash — cd запрещён, PATH только для чтения, без sudo
+#
+# Запуск: ansible-playbook playbooks/03_profiles.yml
+
+- name: Profile | Arendaja (developer) on ws-dev-01
+  hosts: ws-dev-01
+  become: true
+  environment: "{{ proxy_env }}"
+  tasks:
+    - name: Developer tools
+      ansible.builtin.apt:
+        name: [git, python3, python3-venv, vim, htop, curl]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Developer account (member of sudo)
+      ansible.builtin.user:
+        name: "{{ dev_user }}"
+        comment: "Arendaja / Developer"
+        shell: /bin/bash
+        groups: sudo
+        append: true
+        password: "{{ dev_password_hash }}"
+
+    - name: Sudo rights for developer (password required)
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/90-arendaja
+        content: "{{ dev_user }} ALL=(ALL:ALL) ALL\n"
+        mode: "0440"
+        validate: visudo -cf %s
+
+    - name: Dotfiles (.bashrc, .gitconfig)
+      ansible.builtin.template:
+        src: "../profiles/dev/{{ item.src }}"
+        dest: "/home/{{ dev_user }}/{{ item.dest }}"
+        owner: "{{ dev_user }}"
+        group: "{{ dev_user }}"
+        mode: "0644"
+      loop:
+        - {src: bashrc.j2, dest: .bashrc}
+        - {src: gitconfig.j2, dest: .gitconfig}
+
+    - name: .vimrc
+      ansible.builtin.copy:
+        src: ../profiles/dev/vimrc
+        dest: "/home/{{ dev_user }}/.vimrc"
+        owner: "{{ dev_user }}"
+        group: "{{ dev_user }}"
+        mode: "0644"
+
+    - name: Source code folder ~/projects (seeded once, never overwritten)
+      ansible.builtin.copy:
+        src: ../profiles/dev/projects/
+        dest: "/home/{{ dev_user }}/projects/"
+        owner: "{{ dev_user }}"
+        group: "{{ dev_user }}"
+        mode: "u=rwX,g=rX,o="
+        force: false
+
+    - name: Initialise git repo in ~/projects/nordic-app
+      ansible.builtin.shell: |
+        cd /home/{{ dev_user }}/projects/nordic-app
+        git init -q && git add -A && git -c user.name={{ dev_user }} -c user.email={{ dev_user }}@nordictech.local commit -qm "Initial commit"
+      args:
+        creates: "/home/{{ dev_user }}/projects/nordic-app/.git"
+      become_user: "{{ dev_user }}"
+
+- name: Profile | Raamatupidaja (accountant) on ws-fin-01
+  hosts: ws-fin-01
+  become: true
+  tasks:
+    - name: Accountant account — regular user, NOT in sudo
+      ansible.builtin.user:
+        name: "{{ fin_user }}"
+        comment: "Raamatupidaja / Accountant"
+        shell: /bin/bash
+        groups: ""
+        password: "{{ fin_password_hash }}"
+
+    - name: Ensure accountant has no sudo rights
+      ansible.builtin.file:
+        path: "/etc/sudoers.d/90-{{ fin_user }}"
+        state: absent
+
+    - name: Home directory private (0700)
+      ansible.builtin.file:
+        path: "/home/{{ fin_user }}"
+        state: directory
+        owner: "{{ fin_user }}"
+        group: "{{ fin_user }}"
+        mode: "0700"
+
+    - name: Strict umask 0077 (.bashrc, .profile)
+      ansible.builtin.template:
+        src: "../profiles/fin/{{ item.src }}"
+        dest: "/home/{{ fin_user }}/{{ item.dest }}"
+        owner: "{{ fin_user }}"
+        group: "{{ fin_user }}"
+        mode: "0600"
+      loop:
+        - {src: bashrc.j2, dest: .bashrc}
+        - {src: profile.j2, dest: .profile}
+
+    - name: Folder ~/Raamatupidamine_2026 (0700)
+      ansible.builtin.file:
+        path: "/home/{{ fin_user }}/Raamatupidamine_2026"
+        state: directory
+        owner: "{{ fin_user }}"
+        group: "{{ fin_user }}"
+        mode: "0700"
+
+    - name: Seed finance documents (only if missing — restore is done from backup!)
+      ansible.builtin.copy:
+        src: ../profiles/fin/documents/
+        dest: "/home/{{ fin_user }}/Raamatupidamine_2026/"
+        owner: "{{ fin_user }}"
+        group: "{{ fin_user }}"
+        mode: "0600"
+        force: false
+
+- name: Profile | Kiosk (rbash) on kiosk-lobby
+  hosts: kiosks
+  become: true
+  vars:
+    kiosk_home: "/home/{{ kiosk_user }}"
+    kiosk_commands: [date, ls, whoami, clear, uptime]
+  tasks:
+    - name: rbash exists (part of bash)
+      ansible.builtin.stat:
+        path: /bin/rbash
+      register: rbash
+      failed_when: not rbash.stat.exists
+
+    - name: Kiosk account with restricted shell
+      ansible.builtin.user:
+        name: "{{ kiosk_user }}"
+        comment: "Fuajee infokiosk"
+        shell: /bin/rbash
+        groups: ""
+        password: "{{ kiosk_password_hash }}"
+
+    - name: Kiosk has no sudo
+      ansible.builtin.file:
+        path: "/etc/sudoers.d/90-{{ kiosk_user }}"
+        state: absent
+
+    - name: Home owned by root (user cannot change own profile)
+      ansible.builtin.file:
+        path: "{{ kiosk_home }}"
+        state: directory
+        owner: root
+        group: "{{ kiosk_user }}"
+        mode: "0755"
+
+    - name: Allowed commands directory
+      ansible.builtin.file:
+        path: "{{ kiosk_home }}/bin"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Allowed commands (symlinks)
+      ansible.builtin.file:
+        src: "/usr/bin/{{ item }}"
+        dest: "{{ kiosk_home }}/bin/{{ item }}"
+        state: link
+        force: true
+      loop: "{{ kiosk_commands }}"
+
+    - name: Locked .bash_profile (readonly PATH)
+      ansible.builtin.template:
+        src: ../profiles/kiosk/bash_profile.j2
+        dest: "{{ kiosk_home }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [.bash_profile, .bashrc]
+
+    - name: Remove user-writable dotfiles that could override the profile
+      ansible.builtin.file:
+        path: "{{ kiosk_home }}/{{ item }}"
+        state: absent
+      loop: [.profile, .bash_login, .bash_logout]
+
+- name: Profiles | verification
+  hosts: ws-dev-01:ws-fin-01:kiosks
+  become: true
+  tasks:
+    - name: Developer can sudo
+      ansible.builtin.command: sudo -l -U {{ dev_user }}
+      register: dev_sudo
+      changed_when: false
+      failed_when: "'(ALL : ALL) ALL' not in dev_sudo.stdout"
+      when: inventory_hostname == 'ws-dev-01'
+
+    - name: Accountant cannot sudo and umask is 0077
+      ansible.builtin.shell: |
+        sudo -l -U {{ fin_user }} | grep -q "not allowed" && echo NO_SUDO
+        su - {{ fin_user }} -c umask
+      register: fin_check
+      changed_when: false
+      failed_when: "'NO_SUDO' not in fin_check.stdout or '0077' not in fin_check.stdout"
+      when: inventory_hostname == 'ws-fin-01'
+
+    - name: Kiosk cannot cd and cannot change PATH
+      ansible.builtin.shell: |
+        su - {{ kiosk_user }} -c 'cd /etc' 2>&1 || true
+        su - {{ kiosk_user }} -c 'PATH=/usr/bin' 2>&1 || true
+      register: kiosk_check
+      changed_when: false
+      failed_when: kiosk_check.stdout is not search('restricted') or kiosk_check.stdout is not search('readonly|restricted')
+      when: "'kiosks' in group_names"
+
+    - name: Result
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: profile verified"

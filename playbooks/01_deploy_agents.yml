@@ -1,0 +1,105 @@
+---
+# 01_deploy_agents.yml — Неделя 2: установка агентов телеметрии
+#   Ubuntu / Debian / Rocky -> Osquery (официальный репозиторий pkg.osquery.io)
+#   Alpine                  -> лёгкий скрипт телеметрии cf-telemetry (Osquery для Alpine нет)
+#   hq-controller           -> тоже Osquery (контроллер сам попадает в CMDB)
+#
+# Запуск: ansible-playbook playbooks/01_deploy_agents.yml
+
+- name: Osquery agent | Debian family (Ubuntu, Debian)
+  hosts: all:localhost
+  become: true
+  gather_facts: true
+  environment: "{{ proxy_env }}"
+  tasks:
+    - name: Debian family — Osquery from the official APT repo
+      when: ansible_facts['os_family'] == 'Debian'
+      block:
+        - name: Prerequisites (CA certificates, gnupg)
+          ansible.builtin.apt:
+            name: [ca-certificates, gnupg]
+            state: present
+            update_cache: true
+            cache_valid_time: 3600
+
+        - name: Keyring directory
+          ansible.builtin.file:
+            path: /etc/apt/keyrings
+            state: directory
+            mode: "0755"
+
+        - name: Osquery signing key
+          ansible.builtin.get_url:
+            url: https://pkg.osquery.io/deb/pubkey.gpg
+            dest: /etc/apt/keyrings/osquery.asc
+            mode: "0644"
+
+        - name: Osquery APT repository (amd64 + arm64)
+          ansible.builtin.apt_repository:
+            repo: "deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/osquery.asc] https://pkg.osquery.io/deb deb main"
+            filename: osquery
+            state: present
+            update_cache: true
+
+        - name: Install osquery
+          ansible.builtin.apt:
+            name: osquery
+            state: present
+
+    - name: RedHat family (Rocky) — Osquery from the official RPM repo
+      when: ansible_facts['os_family'] == 'RedHat'
+      block:
+        - name: Osquery GPG key
+          ansible.builtin.rpm_key:
+            key: https://pkg.osquery.io/rpm/GPG
+            state: present
+
+        - name: Osquery YUM/DNF repository
+          ansible.builtin.yum_repository:
+            name: osquery
+            description: osquery RPM repository
+            baseurl: https://pkg.osquerypackages.com/rpm/$basearch/
+            gpgcheck: true
+            gpgkey: https://pkg.osquery.io/rpm/GPG
+            enabled: true
+
+        - name: Install osquery
+          ansible.builtin.dnf:
+            name: osquery
+            state: present
+
+    - name: Alpine — lightweight telemetry instead of Osquery
+      when: ansible_facts['os_family'] == 'Alpine'
+      block:
+        - name: Telemetry dependencies (apk)
+          community.general.apk:
+            name: [python3, iproute2, procps]
+            state: present
+            update_cache: true
+
+        - name: Install cf-telemetry script
+          ansible.builtin.copy:
+            src: files/cf-telemetry.py
+            dest: /usr/local/bin/cf-telemetry
+            owner: root
+            group: root
+            mode: "0755"
+
+    - name: Smoke test — Osquery answers SQL
+      ansible.builtin.command: osqueryi --json "SELECT version FROM osquery_info;"
+      register: osq
+      changed_when: false
+      when: ansible_facts['os_family'] != 'Alpine'
+
+    - name: Smoke test — cf-telemetry answers
+      ansible.builtin.command: /usr/local/bin/cf-telemetry inventory
+      register: tel
+      changed_when: false
+      when: ansible_facts['os_family'] == 'Alpine'
+
+    - name: Agent status
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}:
+          {{ ('osquery ' ~ (osq.stdout | from_json)[0].version) if osq is not skipped
+             else 'cf-telemetry OK (' ~ ((tel.stdout | from_json).packages[0].count) ~ ' apk packages)' }}

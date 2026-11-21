@@ -1,0 +1,14 @@
+# SSH-ключи никогда не коммитим (генерируются скриптом на hq-controller)
+id_ed25519*
+*.pem
+# Ansible
+*.retry
+# Локальные бэкапы и артефакты
+backups/
+*.tar.gz
+*.enc
+# IDE / ОС
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

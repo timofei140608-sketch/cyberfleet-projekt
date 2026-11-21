@@ -1,0 +1,9 @@
+# Скрипты и конфиги всегда с LF, иначе в Linux-контейнерах ошибка "bad interpreter"
+*.sh        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.ini       text eol=lf
+*.cfg       text eol=lf
+*.j2        text eol=lf
+*.sql       text eol=lf
+Dockerfile  text eol=lf

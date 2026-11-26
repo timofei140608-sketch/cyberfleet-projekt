@@ -141,5 +141,3 @@ docker compose down -v     # peata + kustuta köited (võtmed, varukoopiad, baas
 | RedFildous | Docker Compose ja võrgud |
 | Munezyku | Dockerfile'id (image'id) |
 | timofei140608-sketch | Ansible ja SSH võtmed |
-
-Projekti koostamisel kasutati AI-assistenti (Claude); kõik lahendused on testitud ja meeskond tutvustab neid kaitsmisel.

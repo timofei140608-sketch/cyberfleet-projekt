@@ -137,7 +137,7 @@ docker compose down -v     # peata + kustuta köited (võtmed, varukoopiad, baas
 
 | Liige | Roll |
 |---|---|
-| … | Meeskonna juht, integratsioon, dokumentatsioon |
+| Herman | Meeskonna juht, integratsioon, dokumentatsioon |
 | RedFildous | Docker Compose ja võrgud |
 | Munezyku | Dockerfile'id (image'id) |
 | timofei140608-sketch | Ansible ja SSH võtmed |

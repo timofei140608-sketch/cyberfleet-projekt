@@ -47,7 +47,7 @@ ASCII (ülesande skeem, meie IP-dega):
    dmz_iot ✗ corp_net   dmz_iot ✗ mgmt_net   corp_net ✗ mgmt_net(backup-vault)
 ```
 
-**Zero Trust tõestus** (`docs/evidence/week1_isolation_test.txt`):
+**Zero Trust tõestus** (`docs/img/isolation_RedFildous.png`):
 `docker exec iot-sensor-1 ping -c 2 ws-fin-01` → `ping: bad address 'ws-fin-01'` — DMZ seade ei suuda
 nimegi lahendada, sest Docker DNS annab nimesid ainult ühise võrgu sees; ühine võrk puudub.
 

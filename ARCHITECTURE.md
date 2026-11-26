@@ -124,3 +124,7 @@ Krüptovõti ei lahku kunagi hq-controllerist → varundusserveri kompromiteerim
    esimene väärtus võidab → meie seaded on failis `00-cyberfleet.conf` **ja** põhifailis.
 6. **Alpine'i konto lukk.** `adduser -D` loob lukus konto, sshd ei luba siis ka võtmega → `chpasswd`.
 7. **Paroolid Gitis ainult räsidena** (SHA-512), SSH paroolisisselogimine on niikuinii keelatud.
+
+## 7. Kuidas võrgu segmenteerimine töötab
+
+Meie projektis on kolm isoleeritud Dockeri võrku: `mgmt_net` (172.30.10.0/24), `corp_net` (172.30.20.0/24) ja `dmz_iot` (172.30.30.0/24). Kuna iga võrk on eraldi segment, ei näe ühe võrgu konteinerid teise võrgu seadmeid ega saa nende nimesid lahendada. Näiteks `iot-sensor-1` on ainult `dmz_iot` võrgus ja `ws-fin-01` on `corp_net` võrgus, mistõttu nendevaheline `ping` ei toimi. `hq-controller` on aga ainus sõlm, mis kuulub kõigisse kolme võrku korraga, et hallata kõiki konteinereid. Tänu sellele ei pääse ründaja DMZ-tsooni seadme kaudu otse sisevõrku ega haldusvõrku.

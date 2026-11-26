@@ -102,6 +102,25 @@ cyberfleet-projekt/
 └── docs/                         # E-ITS.md, evidence/, img/
 ```
 
+## Testitud platvormid
+
+| Kes | Operatsioonisüsteem | Docker | Tulemus |
+|---|---|---|---|
+| Nikita (Munezyku) | Ubuntu 26.04.1 LTS (VM) | 29.10.1 | Kõik 6 image'it ehitati vigadeta, kõik 8 konteinerit töötavad |
+
+### Image'id (Munezyku)
+
+| Image | Baasimage | Peamised paketid ja seadistus | Kasutusotstarve |
+|---|---|---|---|
+| hq-controller | ubuntu:24.04 | ansible, sshpass, nginx, cron, openssl | Keskne juhtsõlm ja CMDB veebiserver |
+| ubuntu | ubuntu:24.04 | openssh-server, python3, sudo | Tööjaamad `ws-dev-01` ja `ws-fin-01` |
+| debian | debian:12 | openssh-server, python3, sudo | Varundusserver `backup-vault` ja `kiosk-lobby` |
+| debian-slim | debian:12-slim | openssh-server, python3, sudo, telnet, netcat, `root:root` | `iot-cam-1` — teadlikult nõrga algseadistusega |
+| rocky | rockylinux:9 | täis-`coreutils`, openssh-server, python3, sudo | Siseserver `srv-app-01` |
+| alpine | alpine:3.20 | openssh, python3, sudo (`apk` kaudu) | Kerge tehaseandur `iot-sensor-1` |
+
+Kõigis image'ites on loodud kasutaja `ansible` paroolita `sudo` õigustega ning paigaldatud `python3`, ilma milleta Ansible'i moodulid ei tööta. SSH-teenus käivitatakse esiplaanil käsuga `sshd -D`, kuna Dockeri konteinerites puudub vaikimisi `systemd`. Ekraanipilt: `docs/img/images_Munezyku.png`.
+
 ## Kasutajad (õppelabor)
 
 | Kasutaja | Kus | Õigused | Märkus |
